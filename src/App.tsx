@@ -5,28 +5,45 @@ import Dashboard from './components/Dashboard';
 import SharedListView from './components/SharedListView';
 import SharedProductView from './components/SharedProductView';
 
+type Route =
+  | { type: 'landing' }
+  | { type: 'dashboard' }
+  | { type: 'shared-list'; param: string }
+  | { type: 'shared-product'; param: string };
+
+function getInitialRoute(): Route {
+  const path = window.location.pathname;
+  if (path.startsWith('/share/list/')) {
+    return { type: 'shared-list', param: path.replace('/share/list/', '') };
+  }
+  if (path.startsWith('/share/product/')) {
+    return { type: 'shared-product', param: path.replace('/share/product/', '') };
+  }
+  return { type: 'landing' };
+}
+
 function App() {
   const { user, loading } = useAuth();
-  const [route, setRoute] = useState<{
-    type: 'landing' | 'dashboard' | 'shared-list' | 'shared-product';
-    param?: string;
-  }>({ type: 'landing' });
+  const [route, setRoute] = useState<Route>(getInitialRoute);
 
   useEffect(() => {
     const path = window.location.pathname;
+    if (path.startsWith('/share/')) return;
 
-    if (path.startsWith('/share/list/')) {
-      const token = path.replace('/share/list/', '');
-      setRoute({ type: 'shared-list', param: token });
-    } else if (path.startsWith('/share/product/')) {
-      const productId = path.replace('/share/product/', '');
-      setRoute({ type: 'shared-product', param: productId });
-    } else if (user) {
+    if (user) {
       setRoute({ type: 'dashboard' });
     } else {
       setRoute({ type: 'landing' });
     }
   }, [user]);
+
+  if (route.type === 'shared-list') {
+    return <SharedListView shareToken={route.param} />;
+  }
+
+  if (route.type === 'shared-product') {
+    return <SharedProductView productId={route.param} />;
+  }
 
   if (loading) {
     return (
@@ -34,14 +51,6 @@ function App() {
         <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900"></div>
       </div>
     );
-  }
-
-  if (route.type === 'shared-list' && route.param) {
-    return <SharedListView shareToken={route.param} />;
-  }
-
-  if (route.type === 'shared-product' && route.param) {
-    return <SharedProductView productId={route.param} />;
   }
 
   if (user) {
