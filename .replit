@@ -10,8 +10,8 @@ packages = ["unzip"]
 [userenv]
 
 [userenv.shared]
-VITE_SUPABASE_URL = "https://iscfnmfhirwjlurepsru.supabase.co"
-VITE_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlzY2ZubWZoaXJ3amx1cmVwc3J1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyMDM0MTksImV4cCI6MjA4OTc3OTQxOX0.Ui5BEuvkC9yxYOs6KNV79OL_hCOabQN1YYPjwYMwTvI"
+VITE_SUPABASE_URL = "https://mazmhcspgfrlyxwbskhy.supabase.co"
+VITE_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1hem1oY3NwZ2ZybHl4d2Jza2h5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyMTgwNzYsImV4cCI6MjA4OTc5NDA3Nn0.deEJQXhJuwc6AZOVL-wo-Xk_g736CwAs1Tpzi5LTW5c"
 
 [workflows]
 runButton = "Project"
