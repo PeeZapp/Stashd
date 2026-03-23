@@ -9,6 +9,7 @@ export interface ScrapedProduct {
   description: string | null;
   sku: string | null;
   price_source: 'manual' | 'ebay' | 'scraped' | null;
+  botProtected?: boolean;
 }
 
 export function parsePrice(raw: string | number | null | undefined): number | null {
@@ -26,9 +27,23 @@ async function fetchViaProxy(url: string): Promise<ScrapedProduct | null> {
     const res = await fetch(`/api/scrape?url=${encodeURIComponent(url)}`, {
       signal: AbortSignal.timeout(18000),
     });
-    if (!res.ok) return null;
     const data = await res.json();
-    if (data.error) return null;
+    if (data.error === 'bot_protection') {
+      return {
+        title: null,
+        current_price: null,
+        original_price: null,
+        is_on_sale: false,
+        is_out_of_stock: false,
+        image_url: null,
+        store_name: data.store_name ?? storeFromUrl(url),
+        description: null,
+        sku: null,
+        price_source: null,
+        botProtected: true,
+      };
+    }
+    if (!res.ok || data.error) return null;
     return {
       title: data.title ?? null,
       current_price: data.current_price ?? null,
@@ -178,6 +193,9 @@ function storeFromUrl(url: string): string | null {
 export async function scrapeProduct(url: string): Promise<ScrapedProduct> {
   // 1. Try server-side proxy
   const proxyResult = await fetchViaProxy(url);
+  if (proxyResult?.botProtected) {
+    return proxyResult;
+  }
   if (proxyResult && (proxyResult.title || proxyResult.image_url)) {
     if (!proxyResult.store_name) proxyResult.store_name = storeFromUrl(url);
     return proxyResult;

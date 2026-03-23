@@ -47,6 +47,7 @@ export default function AddProductModal({ lists, onClose, onSuccess }: AddProduc
   const [formData, setFormData] = useState<FormData>(emptyForm());
   const [selectedListIds, setSelectedListIds] = useState<string[]>([]);
   const [newListName, setNewListName] = useState('');
+  const [botProtected, setBotProtected] = useState(false);
 
   const update = (field: keyof FormData, value: string | boolean | null) =>
     setFormData((prev) => ({ ...prev, [field]: value }));
@@ -70,6 +71,7 @@ export default function AddProductModal({ lists, onClose, onSuccess }: AddProduc
     try {
       const scraped = await scrapeProduct(url);
 
+      setBotProtected(scraped.botProtected ?? false);
       setFormData({
         sourceUrl: url,
         title: scraped.title ?? '',
@@ -349,8 +351,31 @@ export default function AddProductModal({ lists, onClose, onSuccess }: AddProduc
                 />
               </div>
 
+              {/* Bot protection callout */}
+              {botProtected && (
+                <div className="flex items-start space-x-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+                  <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-medium text-red-800">This site blocks automated access</p>
+                    <p className="text-xs text-red-700 mt-0.5">
+                      {formData.storeName || 'This retailer'} uses bot protection (Cloudflare) that prevents reading product details automatically. Please visit the site, copy the product name and price, and enter them below.
+                    </p>
+                    {formData.sourceUrl && (
+                      <a
+                        href={formData.sourceUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-xs text-red-700 font-medium underline mt-1"
+                      >
+                        Open product page <ExternalLink className="w-3 h-3" />
+                      </a>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* Price not found callout */}
-              {!formData.currentPrice && formData.sourceUrl && (
+              {!botProtected && !formData.currentPrice && formData.sourceUrl && (
                 <div className="flex items-start space-x-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
                   <DollarSign className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
                   <div>

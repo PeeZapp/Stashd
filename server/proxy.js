@@ -376,6 +376,24 @@ app.get('/scrape', async (req, res) => {
     return res.status(502).json({ error: 'Empty or too-short response from target site' });
   }
 
+  // Detect Cloudflare / bot-protection challenge pages
+  const isCloudflareChallenge =
+    html.includes('<title>Just a moment...</title>') ||
+    html.includes('cf-browser-verification') ||
+    html.includes('cf_chl_') ||
+    html.includes('Checking your browser before accessing') ||
+    html.includes('Enable JavaScript and cookies to continue') ||
+    html.includes('challenge-platform');
+
+  if (isCloudflareChallenge) {
+    return res.status(403).json({
+      error: 'bot_protection',
+      message: "This site blocks automated access. Please visit the site, copy the price, and enter it manually below.",
+      store_name: storeFromUrl(url),
+      _debug: { blocked: true, reason: 'cloudflare' },
+    });
+  }
+
   let title = null;
   let current_price = null;
   let original_price = null;
