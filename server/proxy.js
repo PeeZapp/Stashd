@@ -1,7 +1,13 @@
 import express from 'express';
+import OpenAI from 'openai';
 
 const app = express();
 const PORT = 3001;
+
+const openai = new OpenAI({
+  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+});
 
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
@@ -216,6 +222,85 @@ function storeFromUrl(url) {
   }
 }
 
+// ── LLM fallback ───────────────────────────────────────────
+
+function stripHtmlToText(html) {
+  // Remove script, style, svg, nav, footer blocks entirely
+  let text = html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<svg[\s\S]*?<\/svg>/gi, ' ')
+    .replace(/<nav[\s\S]*?<\/nav>/gi, ' ')
+    .replace(/<footer[\s\S]*?<\/footer>/gi, ' ')
+    .replace(/<header[\s\S]*?<\/header>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')           // Strip remaining tags
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&#\d+;/g, ' ')
+    .replace(/\s{2,}/g, ' ')            // Collapse whitespace
+    .trim();
+
+  // Limit to ~6000 chars to keep token cost low
+  return text.length > 6000 ? text.slice(0, 6000) : text;
+}
+
+async function llmExtractProductData(html, url) {
+  const apiKey = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+  const baseURL = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
+  if (!apiKey || !baseURL) return null;
+
+  const pageText = stripHtmlToText(html);
+  if (!pageText || pageText.length < 50) return null;
+
+  const prompt = `You are a product data extractor. From the page text below (from ${url}), extract product information as JSON.
+
+Return ONLY valid JSON with these fields (use null if not found):
+{
+  "title": "product name",
+  "current_price": 29.99,
+  "original_price": 49.99,
+  "description": "short description",
+  "image_url": null
+}
+
+Rules:
+- current_price and original_price must be numbers (e.g. 29.99), not strings
+- If there is no sale, original_price should be null
+- If you see both a sale price and a "was" price, current_price = sale price, original_price = was price
+- Keep description under 200 characters
+- image_url: only set if you see a full https:// image URL in the text, otherwise null
+- If this doesn't look like a product page, return all null values
+
+Page text:
+${pageText}`;
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: 'gpt-5-nano',
+      messages: [{ role: 'user', content: prompt }],
+      response_format: { type: 'json_object' },
+      max_completion_tokens: 300,
+    });
+
+    const raw = response.choices[0]?.message?.content;
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw);
+    return {
+      title: typeof parsed.title === 'string' && parsed.title ? parsed.title : null,
+      current_price: typeof parsed.current_price === 'number' && parsed.current_price > 0 ? Math.round(parsed.current_price * 100) / 100 : null,
+      original_price: typeof parsed.original_price === 'number' && parsed.original_price > 0 ? Math.round(parsed.original_price * 100) / 100 : null,
+      description: typeof parsed.description === 'string' && parsed.description ? parsed.description : null,
+      image_url: typeof parsed.image_url === 'string' && parsed.image_url.startsWith('https://') ? parsed.image_url : null,
+    };
+  } catch (err) {
+    console.error('LLM fallback error:', err.message);
+    return null;
+  }
+}
+
 // ── eBay Finding API ───────────────────────────────────────
 
 async function searchEbayPrice(query, sku) {
@@ -354,6 +439,21 @@ app.get('/scrape', async (req, res) => {
   if (ogAvail) availabilityText += ' ' + ogAvail;
 
   store_name = store_name ?? storeFromUrl(url);
+
+  // 6) LLM fallback — only when title or price is still missing
+  let llmUsed = false;
+  if (!title || current_price === null) {
+    const llm = await llmExtractProductData(html, url);
+    if (llm) {
+      llmUsed = true;
+      if (!title && llm.title) title = llm.title;
+      if (current_price === null && llm.current_price !== null) { current_price = llm.current_price; price_source = 'scraped'; }
+      if (original_price === null && llm.original_price !== null) original_price = llm.original_price;
+      if (!description && llm.description) description = llm.description;
+      if (!image_url && llm.image_url) image_url = llm.image_url;
+    }
+  }
+
   const is_out_of_stock = detectOutOfStock(availabilityText);
   const is_on_sale =
     current_price !== null && original_price !== null && original_price > current_price;
@@ -372,7 +472,7 @@ app.get('/scrape', async (req, res) => {
     description,
     sku,
     price_source,
-    _debug: { htmlLength: html.length, hasJsonLd: ld !== null },
+    _debug: { htmlLength: html.length, hasJsonLd: ld !== null, llmUsed },
   });
 });
 

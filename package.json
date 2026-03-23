@@ -12,10 +12,16 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",
+    "drizzle-zod": "^0.8.3",
     "express": "^5.2.1",
     "lucide-react": "^0.344.0",
+    "openai": "^6.32.0",
+    "p-limit": "^7.3.0",
+    "p-retry": "^7.1.1",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "zod": "^4.3.6",
+    "zod-validation-error": "^5.0.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.9.1",
