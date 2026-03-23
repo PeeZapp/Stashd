@@ -1,4 +1,4 @@
-import { ExternalLink, Trash2, ShoppingBag, PackageX } from 'lucide-react';
+import { ExternalLink, Trash2, ShoppingBag, PackageX, CheckCircle } from 'lucide-react';
 import type { Product } from '../lib/types';
 
 interface ProductCardProps {
@@ -83,6 +83,21 @@ export default function ProductCard({ product, onClick, onDelete }: ProductCardP
             </>
           ) : (
             <span className="text-sm text-gray-400 italic">No price set</span>
+          )}
+        </div>
+
+        {/* Stock status indicator */}
+        <div className="mb-3">
+          {product.is_out_of_stock ? (
+            <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full bg-red-50 border border-red-200 text-red-700 text-xs font-medium">
+              <PackageX className="w-3 h-3" />
+              <span>Out of Stock</span>
+            </span>
+          ) : (
+            <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full bg-green-50 border border-green-200 text-green-700 text-xs font-medium">
+              <CheckCircle className="w-3 h-3" />
+              <span>In Stock</span>
+            </span>
           )}
         </div>
 
