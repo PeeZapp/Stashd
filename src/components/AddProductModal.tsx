@@ -61,36 +61,53 @@ export default function AddProductModal({ lists, onClose, onSuccess }: AddProduc
     setStep('fetching');
 
     try {
-      const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/scrape_product`;
+      // Use microlink.io — free metadata scraping API, no key required
+      const apiUrl = `https://api.microlink.io?url=${encodeURIComponent(url)}&screenshot=false`;
       const response = await fetch(apiUrl, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ url }),
+        headers: { Accept: 'application/json' },
       });
-
       const json = await response.json();
 
-      if (!response.ok || !json.success) {
-        throw new Error(json.error || 'Failed to fetch product data');
+      if (json.status !== 'success') {
+        throw new Error('Could not read page metadata');
       }
 
-      const d = json.data;
+      const d = json.data ?? {};
+
+      // Extract store name from hostname
+      const storeFromHost = (() => {
+        try {
+          const host = new URL(url).hostname.replace(/^www\./, '');
+          const name = host.split('.')[0];
+          return name.charAt(0).toUpperCase() + name.slice(1);
+        } catch {
+          return '';
+        }
+      })();
+
+      // Extract price — microlink returns price as a string like "$29.99"
+      const rawPrice: string | null = d.price ?? null;
+      let currentPrice = '';
+      if (rawPrice) {
+        const num = parseFloat(rawPrice.replace(/[^0-9.]/g, ''));
+        if (!isNaN(num)) currentPrice = String(num);
+      }
+
       setFormData({
         sourceUrl: url,
         title: d.title ?? '',
-        currentPrice: d.current_price != null ? String(d.current_price) : '',
-        originalPrice: d.original_price != null ? String(d.original_price) : '',
-        imageUrl: d.image_url ?? '',
-        storeName: d.store_name ?? '',
+        currentPrice,
+        originalPrice: '',
+        imageUrl: d.image?.url ?? d.logo?.url ?? '',
+        storeName: d.publisher ?? storeFromHost,
         description: d.description ?? '',
       });
       setStep('details');
     } catch (err) {
       console.error('Fetch error:', err);
+      // Fall back to manual entry but keep the URL
       setFormData(emptyForm(url));
+      setError('Could not read that page automatically — please fill in the details below.');
       setStep('details');
     }
   };
