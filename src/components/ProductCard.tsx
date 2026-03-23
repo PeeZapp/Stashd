@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { ExternalLink, Trash2, ShoppingBag, PackageX, CheckCircle, Pencil } from 'lucide-react';
+import { ExternalLink, Trash2, ShoppingBag, PackageX, CheckCircle, Pencil, Info } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import type { Product } from '../lib/types';
 
@@ -43,7 +43,7 @@ export default function ProductCard({ product, onClick, onDelete, onPriceUpdate 
 
       const { data } = await supabase
         .from('products')
-        .update({ current_price: num, is_on_sale: isOnSale })
+        .update({ current_price: num, is_on_sale: isOnSale, price_source: 'manual' })
         .eq('id', product.id)
         .select()
         .single();
@@ -64,6 +64,8 @@ export default function ProductCard({ product, onClick, onDelete, onPriceUpdate 
       setEditingPrice(false);
     }
   };
+
+  const isEbayPrice = product.price_source === 'ebay';
 
   return (
     <div
@@ -93,7 +95,6 @@ export default function ProductCard({ product, onClick, onDelete, onPriceUpdate 
           </div>
         )}
 
-        {/* Out of stock overlay */}
         {product.is_out_of_stock && (
           <div className="absolute inset-0 flex items-end">
             <div className="w-full bg-gray-900 bg-opacity-80 text-white text-center py-2 flex items-center justify-center space-x-1.5">
@@ -103,7 +104,6 @@ export default function ProductCard({ product, onClick, onDelete, onPriceUpdate 
           </div>
         )}
 
-        {/* Sale badge */}
         {!product.is_out_of_stock && product.is_on_sale && discount > 0 && (
           <div className="absolute top-3 right-3 bg-red-600 text-white px-3 py-1 rounded-full text-sm font-semibold">
             -{discount}%
@@ -112,12 +112,18 @@ export default function ProductCard({ product, onClick, onDelete, onPriceUpdate 
       </div>
 
       <div className="p-4">
+        {/* Store + SKU */}
         <div className="mb-2">
-          {product.store_name && (
-            <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">
-              {product.store_name}
-            </p>
-          )}
+          <div className="flex items-center justify-between mb-1">
+            {product.store_name && (
+              <p className="text-xs text-gray-500 uppercase tracking-wide">{product.store_name}</p>
+            )}
+            {product.sku && (
+              <p className="text-xs text-gray-400 font-mono truncate max-w-[120px]" title={`SKU: ${product.sku}`}>
+                SKU {product.sku}
+              </p>
+            )}
+          </div>
           <h3
             className="text-base font-semibold text-gray-900 line-clamp-2 cursor-pointer hover:text-gray-700 transition-colors"
             onClick={onClick}
@@ -127,7 +133,7 @@ export default function ProductCard({ product, onClick, onDelete, onPriceUpdate 
         </div>
 
         {/* Price — click to edit */}
-        <div className="mb-3">
+        <div className="mb-1">
           {editingPrice ? (
             <div className="flex items-center space-x-1.5" onClick={(e) => e.stopPropagation()}>
               <div className="relative flex-1">
@@ -166,7 +172,7 @@ export default function ProductCard({ product, onClick, onDelete, onPriceUpdate 
             <button
               onClick={(e) => { e.stopPropagation(); setEditingPrice(true); }}
               className="flex items-baseline space-x-2 group/price hover:opacity-75 transition-opacity text-left w-full"
-              title="Click to set price"
+              title={isEbayPrice ? 'eBay market price — click to enter actual price' : 'Click to set price'}
             >
               {product.current_price != null ? (
                 <>
@@ -190,7 +196,17 @@ export default function ProductCard({ product, onClick, onDelete, onPriceUpdate 
           )}
         </div>
 
-        {/* Stock status indicator */}
+        {/* eBay price disclaimer */}
+        {isEbayPrice && !editingPrice && product.current_price != null && (
+          <div className="flex items-center space-x-1 mb-2">
+            <Info className="w-3 h-3 text-gray-400 flex-shrink-0" />
+            <p className="text-xs text-gray-400">
+              eBay market price · may differ from retailer
+            </p>
+          </div>
+        )}
+
+        {/* Stock status */}
         <div className="mb-3">
           {product.is_out_of_stock ? (
             <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full bg-red-50 border border-red-200 text-red-700 text-xs font-medium">
@@ -218,10 +234,7 @@ export default function ProductCard({ product, onClick, onDelete, onPriceUpdate 
             <ExternalLink className="w-4 h-4" />
           </a>
           <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete();
-            }}
+            onClick={(e) => { e.stopPropagation(); onDelete(); }}
             className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
             title="Delete product"
           >

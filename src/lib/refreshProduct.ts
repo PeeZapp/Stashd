@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import { scrapeProduct } from './scrapeProduct';
+import { scrapeProduct, fetchEbayPrice } from './scrapeProduct';
 import type { Product } from './types';
 
 export interface RefreshResult {
@@ -13,7 +13,21 @@ export async function refreshProduct(
 ): Promise<RefreshResult> {
   const scraped = await scrapeProduct(product.source_url);
 
-  const newPrice = scraped.current_price;
+  // If scraping returned no price but we have a title, fall back to eBay
+  let newPrice = scraped.current_price;
+  let priceSource = scraped.price_source;
+
+  if (newPrice === null && (scraped.title ?? product.title)) {
+    const ebayPrice = await fetchEbayPrice(
+      scraped.title ?? product.title,
+      scraped.sku ?? product.sku
+    );
+    if (ebayPrice !== null) {
+      newPrice = ebayPrice;
+      priceSource = 'ebay';
+    }
+  }
+
   const newOutOfStock = scraped.is_out_of_stock;
   const oldPrice = product.current_price;
   const oldOutOfStock = product.is_out_of_stock;
@@ -37,6 +51,7 @@ export async function refreshProduct(
   }
 
   // Price changes
+  const priceLabel = priceSource === 'ebay' ? ' (eBay market price)' : '';
   if (newPrice !== null && oldPrice !== null && newPrice < oldPrice) {
     const diff = (oldPrice - newPrice).toFixed(2);
     const isOnSale =
@@ -45,18 +60,17 @@ export async function refreshProduct(
         : product.original_price !== null
         ? newPrice < product.original_price
         : false;
-    changes.push(`Price dropped $${diff} (now $${newPrice.toFixed(2)})`);
+    changes.push(`Price dropped $${diff} — now $${newPrice.toFixed(2)}${priceLabel}`);
     notifications.push({
       type: isOnSale ? 'on_sale' : 'price_drop',
-      message: `"${product.title}" dropped $${diff} — now $${newPrice.toFixed(2)}.`,
+      message: `"${product.title}" dropped $${diff} — now $${newPrice.toFixed(2)}${priceLabel}.`,
     });
   } else if (newPrice !== null && oldPrice === null) {
-    changes.push(`Price found: $${newPrice.toFixed(2)}`);
+    changes.push(`Price found: $${newPrice.toFixed(2)}${priceLabel}`);
   } else if (newPrice !== null && oldPrice !== null && newPrice > oldPrice) {
-    changes.push(`Price updated to $${newPrice.toFixed(2)}`);
+    changes.push(`Price updated to $${newPrice.toFixed(2)}${priceLabel}`);
   }
 
-  // Update image/title if they improved
   if (scraped.image_url && !product.image_url) {
     changes.push('Image found');
   }
@@ -65,7 +79,8 @@ export async function refreshProduct(
     changes.length > 0 ||
     newOutOfStock !== oldOutOfStock ||
     (newPrice !== null && newPrice !== oldPrice) ||
-    (scraped.image_url && !product.image_url);
+    (scraped.image_url && !product.image_url) ||
+    (scraped.sku && !product.sku);
 
   if (hasChanges) {
     const updatePayload: Record<string, unknown> = {
@@ -74,7 +89,7 @@ export async function refreshProduct(
 
     if (newPrice !== null) {
       updatePayload.current_price = newPrice;
-      // Preserve original price if we now know the current dropped below it
+      updatePayload.price_source = priceSource;
       const knownOriginal = scraped.original_price ?? product.original_price;
       if (knownOriginal !== null && knownOriginal > newPrice) {
         updatePayload.original_price = knownOriginal;
@@ -85,12 +100,9 @@ export async function refreshProduct(
       }
     }
 
-    if (scraped.image_url && !product.image_url) {
-      updatePayload.image_url = scraped.image_url;
-    }
-    if (scraped.store_name && !product.store_name) {
-      updatePayload.store_name = scraped.store_name;
-    }
+    if (scraped.image_url && !product.image_url) updatePayload.image_url = scraped.image_url;
+    if (scraped.store_name && !product.store_name) updatePayload.store_name = scraped.store_name;
+    if (scraped.sku && !product.sku) updatePayload.sku = scraped.sku;
 
     await supabase.from('products').update(updatePayload).eq('id', product.id);
 

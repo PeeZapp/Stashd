@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, ExternalLink, Share2, Trash2, Check, ShoppingBag, RefreshCw, PackageX } from 'lucide-react';
+import { X, ExternalLink, Share2, Trash2, Check, ShoppingBag, RefreshCw, PackageX, Info } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { refreshProduct } from '../lib/refreshProduct';
 import { useAuth } from '../contexts/AuthContext';
@@ -95,6 +95,7 @@ export default function ProductDetailModal({
       : 0;
 
   const storeName = product.store_name ?? 'Store';
+  const isEbayPrice = product.price_source === 'ebay';
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto">
@@ -146,11 +147,18 @@ export default function ProductDetailModal({
           {/* Details */}
           <div className="flex flex-col">
             <div className="mb-4">
-              {product.store_name && (
-                <p className="text-sm text-gray-500 uppercase tracking-wide mb-2">
-                  {product.store_name}
-                </p>
-              )}
+              {/* Store + SKU row */}
+              <div className="flex items-center justify-between mb-2">
+                {product.store_name && (
+                  <p className="text-sm text-gray-500 uppercase tracking-wide">{product.store_name}</p>
+                )}
+                {product.sku && (
+                  <span className="text-xs text-gray-400 font-mono bg-gray-50 border border-gray-200 px-2 py-0.5 rounded">
+                    SKU {product.sku}
+                  </span>
+                )}
+              </div>
+
               <h2 className="text-2xl font-bold text-gray-900 mb-4">{product.title}</h2>
 
               {product.description && (
@@ -167,7 +175,8 @@ export default function ProductDetailModal({
                 </div>
               )}
 
-              <div className="flex items-baseline space-x-3 mb-4">
+              {/* Price */}
+              <div className="flex items-baseline space-x-3 mb-1">
                 {product.current_price != null ? (
                   <>
                     <span className={`text-3xl font-bold ${product.is_out_of_stock ? 'text-gray-400' : 'text-gray-900'}`}>
@@ -184,6 +193,26 @@ export default function ProductDetailModal({
                 )}
               </div>
 
+              {/* Price source disclaimer */}
+              {product.current_price != null && (
+                <div className="flex items-start space-x-1.5 mb-4">
+                  <Info className="w-3.5 h-3.5 text-gray-400 flex-shrink-0 mt-0.5" />
+                  {isEbayPrice ? (
+                    <p className="text-xs text-gray-500">
+                      Price sourced from eBay marketplace listings. This is a market reference price and may differ from the actual retailer's current price. Click the price on the card to enter the real price manually.
+                    </p>
+                  ) : product.price_source === 'scraped' ? (
+                    <p className="text-xs text-gray-500">
+                      Price read directly from the product page. Verify on the retailer's site for accuracy.
+                    </p>
+                  ) : (
+                    <p className="text-xs text-gray-500">
+                      Price entered manually.
+                    </p>
+                  )}
+                </div>
+              )}
+
               {product.is_on_sale && product.original_price && product.current_price && (
                 <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg">
                   <p className="text-sm text-green-800 font-medium">
@@ -192,7 +221,7 @@ export default function ProductDetailModal({
                 </div>
               )}
 
-              {/* Refresh result message */}
+              {/* Refresh result */}
               {refreshMsg && (
                 <div className={`mb-4 p-3 rounded-lg border text-sm font-medium ${refreshMsg.type === 'success' ? 'bg-blue-50 border-blue-200 text-blue-800' : 'bg-red-50 border-red-200 text-red-700'}`}>
                   {refreshMsg.text}
@@ -238,7 +267,6 @@ export default function ProductDetailModal({
                 <ExternalLink className="w-5 h-5" />
               </a>
 
-              {/* Refresh button */}
               <button
                 onClick={handleRefresh}
                 disabled={refreshing}
@@ -247,6 +275,11 @@ export default function ProductDetailModal({
                 <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
                 <span>{refreshing ? 'Checking…' : 'Check Price & Stock'}</span>
               </button>
+
+              {/* Refresh disclaimer */}
+              <p className="text-xs text-gray-400 text-center">
+                Prices from eBay marketplace · stock from retailer page where available
+              </p>
 
               <div className="flex space-x-2">
                 <button

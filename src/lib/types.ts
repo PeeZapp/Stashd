@@ -37,6 +37,8 @@ export interface Database {
           source_url: string;
           store_name: string | null;
           description: string | null;
+          sku: string | null;
+          price_source: 'manual' | 'ebay' | 'scraped' | null;
           created_at: string;
           updated_at: string;
         };
@@ -52,6 +54,8 @@ export interface Database {
           source_url: string;
           store_name?: string | null;
           description?: string | null;
+          sku?: string | null;
+          price_source?: 'manual' | 'ebay' | 'scraped' | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -67,6 +71,8 @@ export interface Database {
           source_url?: string;
           store_name?: string | null;
           description?: string | null;
+          sku?: string | null;
+          price_source?: 'manual' | 'ebay' | 'scraped' | null;
           created_at?: string;
           updated_at?: string;
         };

@@ -7,6 +7,8 @@ export interface ScrapedProduct {
   image_url: string | null;
   store_name: string | null;
   description: string | null;
+  sku: string | null;
+  price_source: 'manual' | 'ebay' | 'scraped' | null;
 }
 
 export function parsePrice(raw: string | number | null | undefined): number | null {
@@ -17,10 +19,7 @@ export function parsePrice(raw: string | number | null | undefined): number | nu
   return isNaN(num) || num <= 0 ? null : num;
 }
 
-// ── Try the local server-side proxy first ──────────────────
-// When running in Replit (dev), Vite proxies /api → localhost:3001.
-// The proxy fetches product pages server-side with real browser headers,
-// bypassing CORS restrictions and bot-detection that blocks browser requests.
+// ── Local server-side proxy ────────────────────────────────
 
 async function fetchViaProxy(url: string): Promise<ScrapedProduct | null> {
   try {
@@ -39,17 +38,35 @@ async function fetchViaProxy(url: string): Promise<ScrapedProduct | null> {
       image_url: data.image_url ?? null,
       store_name: data.store_name ?? null,
       description: data.description ?? null,
+      sku: data.sku ?? null,
+      price_source: data.price_source ?? null,
     };
   } catch {
     return null;
   }
 }
 
-// ── CORS-proxy fallback (used if local proxy is unavailable) ──
+// ── eBay price lookup ──────────────────────────────────────
 
-function parsePrice2(raw: string | number | null | undefined): number | null {
-  return parsePrice(raw);
+export async function fetchEbayPrice(
+  query: string,
+  sku?: string | null
+): Promise<number | null> {
+  try {
+    const params = new URLSearchParams({ query });
+    if (sku) params.set('sku', sku);
+    const res = await fetch(`/api/ebay-price?${params}`, {
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return typeof data.price === 'number' ? data.price : null;
+  } catch {
+    return null;
+  }
 }
+
+// ── CORS-proxy fallback ────────────────────────────────────
 
 function extractOgTag(html: string, property: string): string | null {
   const patterns = [
@@ -71,48 +88,6 @@ function extractMetaTag(html: string, name: string): string | null {
   for (const p of patterns) {
     const m = p.exec(html);
     if (m) return m[1].trim();
-  }
-  return null;
-}
-
-function parseJsonLdFromHtml(html: string): {
-  title?: string; price?: number; highPrice?: number; image?: string; description?: string; availability?: string;
-} | null {
-  const scriptPattern = /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
-  let match: RegExpExecArray | null;
-  while ((match = scriptPattern.exec(html)) !== null) {
-    try {
-      const data = JSON.parse(match[1].trim());
-      const items: unknown[] = Array.isArray(data)
-        ? data
-        : data['@graph']
-        ? data['@graph']
-        : [data];
-      for (const item of items) {
-        if (typeof item !== 'object' || item === null) continue;
-        const obj = item as Record<string, unknown>;
-        const typeStr = String(Array.isArray(obj['@type']) ? (obj['@type'] as string[]).join(' ') : (obj['@type'] ?? ''));
-        if (!typeStr.toLowerCase().includes('product')) continue;
-        const result: Record<string, unknown> = {};
-        if (typeof obj.name === 'string') result.title = obj.name;
-        if (typeof obj.description === 'string') result.description = obj.description;
-        const img = obj.image;
-        if (typeof img === 'string') result.image = img;
-        else if (Array.isArray(img) && img.length > 0)
-          result.image = typeof img[0] === 'string' ? img[0] : (img[0] as Record<string, string>).url;
-        const offersRaw = obj.offers;
-        const offers = Array.isArray(offersRaw) ? offersRaw[0] : offersRaw;
-        if (offers && typeof offers === 'object') {
-          const o = offers as Record<string, unknown>;
-          const p = parsePrice2(o.price as string);
-          if (p !== null) result.price = p;
-          const hp = parsePrice2(o.highPrice as string);
-          if (hp !== null) result.highPrice = hp;
-          if (typeof o.availability === 'string') result.availability = o.availability;
-        }
-        if (result.title || result.price !== undefined) return result as never;
-      }
-    } catch { /* skip */ }
   }
   return null;
 }
@@ -146,7 +121,7 @@ async function fetchViaCorsProxy(url: string): Promise<ScrapedProduct | null> {
     } catch { /* try next */ }
   }
 
-  const [ml] = await Promise.all([fetchMicrolink(url)]);
+  const ml = await fetchMicrolink(url);
 
   let title: string | null = null;
   let current_price: number | null = null;
@@ -156,14 +131,6 @@ async function fetchViaCorsProxy(url: string): Promise<ScrapedProduct | null> {
   let description: string | null = null;
 
   if (html) {
-    const ld = parseJsonLdFromHtml(html);
-    if (ld) {
-      if (ld.title) title = ld.title;
-      if (ld.image) image_url = ld.image;
-      if (ld.description) description = ld.description;
-      if (ld.price !== undefined && ld.price > 0) current_price = ld.price;
-      if (ld.highPrice !== undefined && ld.highPrice > (current_price ?? 0)) original_price = ld.highPrice;
-    }
     title = title ?? extractOgTag(html, 'title');
     image_url = image_url ?? extractOgTag(html, 'image');
     description = description ?? extractOgTag(html, 'description') ?? extractMetaTag(html, 'description');
@@ -191,6 +158,8 @@ async function fetchViaCorsProxy(url: string): Promise<ScrapedProduct | null> {
     image_url,
     store_name,
     description,
+    sku: null,
+    price_source: current_price !== null ? 'scraped' : null,
   };
 }
 
@@ -207,21 +176,40 @@ function storeFromUrl(url: string): string | null {
 // ── Main export ─────────────────────────────────────────────
 
 export async function scrapeProduct(url: string): Promise<ScrapedProduct> {
-  // Try the server-side proxy first (works with proper browser headers, no CORS)
+  // 1. Try server-side proxy
   const proxyResult = await fetchViaProxy(url);
   if (proxyResult && (proxyResult.title || proxyResult.image_url)) {
     if (!proxyResult.store_name) proxyResult.store_name = storeFromUrl(url);
+
+    // 2. If no price from scraping, try eBay
+    if (proxyResult.current_price === null && proxyResult.title) {
+      const ebayPrice = await fetchEbayPrice(proxyResult.title, proxyResult.sku);
+      if (ebayPrice !== null) {
+        proxyResult.current_price = ebayPrice;
+        proxyResult.price_source = 'ebay';
+      }
+    }
+
     return proxyResult;
   }
 
-  // Fall back to CORS proxies + microlink (degrades gracefully without the proxy server)
+  // 3. CORS proxy fallback
   const corsResult = await fetchViaCorsProxy(url);
   if (corsResult) {
     if (!corsResult.store_name) corsResult.store_name = storeFromUrl(url);
+
+    if (corsResult.current_price === null && corsResult.title) {
+      const ebayPrice = await fetchEbayPrice(corsResult.title, null);
+      if (ebayPrice !== null) {
+        corsResult.current_price = ebayPrice;
+        corsResult.price_source = 'ebay';
+      }
+    }
+
     return corsResult;
   }
 
-  // Last resort: return empty product with just the store name
+  // 4. Last resort — just store what we know
   return {
     title: null,
     current_price: null,
@@ -231,5 +219,7 @@ export async function scrapeProduct(url: string): Promise<ScrapedProduct> {
     image_url: null,
     store_name: storeFromUrl(url),
     description: null,
+    sku: null,
+    price_source: null,
   };
 }

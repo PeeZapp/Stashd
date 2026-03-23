@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { X, Plus, AlertCircle, Loader, ExternalLink, ChevronLeft, DollarSign } from 'lucide-react';
+import { X, Plus, AlertCircle, Loader, ExternalLink, ChevronLeft, DollarSign, Info } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { scrapeProduct } from '../lib/scrapeProduct';
@@ -22,6 +22,8 @@ interface FormData {
   storeName: string;
   description: string;
   isOutOfStock: boolean;
+  sku: string;
+  priceSource: 'manual' | 'ebay' | 'scraped' | null;
 }
 
 const emptyForm = (sourceUrl = ''): FormData => ({
@@ -33,6 +35,8 @@ const emptyForm = (sourceUrl = ''): FormData => ({
   storeName: '',
   description: '',
   isOutOfStock: false,
+  sku: '',
+  priceSource: null,
 });
 
 export default function AddProductModal({ lists, onClose, onSuccess }: AddProductModalProps) {
@@ -44,7 +48,7 @@ export default function AddProductModal({ lists, onClose, onSuccess }: AddProduc
   const [selectedListIds, setSelectedListIds] = useState<string[]>([]);
   const [newListName, setNewListName] = useState('');
 
-  const update = (field: keyof FormData, value: string) =>
+  const update = (field: keyof FormData, value: string | boolean | null) =>
     setFormData((prev) => ({ ...prev, [field]: value }));
 
   const handleFetchUrl = async () => {
@@ -75,6 +79,8 @@ export default function AddProductModal({ lists, onClose, onSuccess }: AddProduc
         storeName: scraped.store_name ?? '',
         description: scraped.description ?? '',
         isOutOfStock: scraped.is_out_of_stock,
+        sku: scraped.sku ?? '',
+        priceSource: scraped.price_source,
       });
       setStep('details');
     } catch (err) {
@@ -124,6 +130,8 @@ export default function AddProductModal({ lists, onClose, onSuccess }: AddProduc
           image_url: formData.imageUrl.trim() || null,
           store_name: formData.storeName.trim() || null,
           description: formData.description.trim() || null,
+          sku: formData.sku.trim() || null,
+          price_source: formData.priceSource,
         })
         .select()
         .single();
@@ -232,7 +240,7 @@ export default function AddProductModal({ lists, onClose, onSuccess }: AddProduc
             <Loader className="w-10 h-10 text-gray-900 animate-spin" />
             <p className="text-gray-700 font-medium">Fetching product details…</p>
             <p className="text-sm text-gray-400 text-center max-w-xs">
-              We're reading the page metadata. This usually takes just a second.
+              Reading product info and checking eBay for pricing. This usually takes just a second.
             </p>
           </div>
         )}
@@ -259,7 +267,7 @@ export default function AddProductModal({ lists, onClose, onSuccess }: AddProduc
             )}
 
             <form onSubmit={handleSubmit} className="space-y-4">
-              {/* URL (readonly-ish) */}
+              {/* URL */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Product URL <span className="text-red-500">*</span>
@@ -274,7 +282,7 @@ export default function AddProductModal({ lists, onClose, onSuccess }: AddProduc
                 />
               </div>
 
-              {/* Title — required */}
+              {/* Title */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Product Name <span className="text-red-500">*</span>
@@ -289,7 +297,7 @@ export default function AddProductModal({ lists, onClose, onSuccess }: AddProduc
                 />
               </div>
 
-              {/* Prices — prompt clearly if not found */}
+              {/* Price not found callout */}
               {!formData.currentPrice && formData.sourceUrl && (
                 <div className="flex items-start space-x-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
                   <DollarSign className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
@@ -302,6 +310,20 @@ export default function AddProductModal({ lists, onClose, onSuccess }: AddProduc
                 </div>
               )}
 
+              {/* eBay price disclaimer when price was sourced from eBay */}
+              {formData.currentPrice && formData.priceSource === 'ebay' && (
+                <div className="flex items-start space-x-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                  <Info className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-medium text-blue-800">Price from eBay marketplace</p>
+                    <p className="text-xs text-blue-700 mt-0.5">
+                      We couldn't read the price directly from the retailer, so this is the lowest new listing price from eBay. It's a useful reference but may differ from the retailer's actual price. You can edit it below.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Prices */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -314,7 +336,7 @@ export default function AddProductModal({ lists, onClose, onSuccess }: AddProduc
                       step="0.01"
                       min="0"
                       value={formData.currentPrice}
-                      onChange={(e) => update('currentPrice', e.target.value)}
+                      onChange={(e) => { update('currentPrice', e.target.value); update('priceSource', 'manual'); }}
                       className={`w-full pl-7 pr-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent ${!formData.currentPrice && formData.sourceUrl ? 'border-amber-300 bg-amber-50' : 'border-gray-300'}`}
                       placeholder="0.00"
                       autoFocus={!formData.currentPrice && !!formData.sourceUrl}
@@ -341,7 +363,7 @@ export default function AddProductModal({ lists, onClose, onSuccess }: AddProduc
                 </div>
               </div>
 
-              {/* Image preview + URL */}
+              {/* Image */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Image URL
@@ -366,19 +388,34 @@ export default function AddProductModal({ lists, onClose, onSuccess }: AddProduc
                 />
               </div>
 
-              {/* Store name */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Store Name
-                  <span className="ml-1 text-xs text-gray-400">(optional)</span>
-                </label>
-                <input
-                  type="text"
-                  value={formData.storeName}
-                  onChange={(e) => update('storeName', e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent"
-                  placeholder="e.g., Amazon, Nike, Apple"
-                />
+              {/* Store + SKU row */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Store Name
+                    <span className="ml-1 text-xs text-gray-400">(optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.storeName}
+                    onChange={(e) => update('storeName', e.target.value)}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent"
+                    placeholder="e.g., Amazon, Nike"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    SKU / Model No.
+                    <span className="ml-1 text-xs text-gray-400">(optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.sku}
+                    onChange={(e) => update('sku', e.target.value)}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent font-mono text-sm"
+                    placeholder="e.g., ABC-1234"
+                  />
+                </div>
               </div>
 
               {/* Description */}
