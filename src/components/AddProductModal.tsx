@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { X, Plus, AlertCircle, Loader, ExternalLink, ChevronLeft } from 'lucide-react';
+import { X, Plus, AlertCircle, Loader, ExternalLink, ChevronLeft, DollarSign } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { scrapeProduct } from '../lib/scrapeProduct';
@@ -289,12 +289,23 @@ export default function AddProductModal({ lists, onClose, onSuccess }: AddProduc
                 />
               </div>
 
-              {/* Prices — optional */}
+              {/* Prices — prompt clearly if not found */}
+              {!formData.currentPrice && formData.sourceUrl && (
+                <div className="flex items-start space-x-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                  <DollarSign className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-medium text-amber-800">Price not found automatically</p>
+                    <p className="text-xs text-amber-700 mt-0.5">
+                      Most major retailers protect their prices from automated reading. Check the site and enter the price below — it only takes a second.
+                    </p>
+                  </div>
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Current Price
-                    <span className="ml-1 text-xs text-gray-400">(optional)</span>
                   </label>
                   <div className="relative">
                     <span className="absolute left-3 top-2.5 text-gray-500 text-sm">$</span>
@@ -304,15 +315,16 @@ export default function AddProductModal({ lists, onClose, onSuccess }: AddProduc
                       min="0"
                       value={formData.currentPrice}
                       onChange={(e) => update('currentPrice', e.target.value)}
-                      className="w-full pl-7 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent"
+                      className={`w-full pl-7 pr-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent ${!formData.currentPrice && formData.sourceUrl ? 'border-amber-300 bg-amber-50' : 'border-gray-300'}`}
                       placeholder="0.00"
+                      autoFocus={!formData.currentPrice && !!formData.sourceUrl}
                     />
                   </div>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Original Price
-                    <span className="ml-1 text-xs text-gray-400">(optional)</span>
+                    Original / Was Price
+                    <span className="ml-1 text-xs text-gray-400">(if on sale)</span>
                   </label>
                   <div className="relative">
                     <span className="absolute left-3 top-2.5 text-gray-500 text-sm">$</span>

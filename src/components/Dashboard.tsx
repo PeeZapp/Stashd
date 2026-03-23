@@ -167,6 +167,19 @@ export default function Dashboard() {
     setRefreshingAll(false);
   };
 
+  // ── Inline price update from ProductCard ──────────────────
+
+  const handlePriceUpdate = (updatedProduct: import('../lib/types').Product) => {
+    setListsWithProducts((prev) =>
+      prev.map((list) => ({
+        ...list,
+        products: list.products.map((p) =>
+          p.id === updatedProduct.id ? { ...p, ...updatedProduct } : p
+        ),
+      }))
+    );
+  };
+
   // ── Views ─────────────────────────────────────────────────
 
   const activeList =
@@ -272,6 +285,7 @@ export default function Dashboard() {
                   product={product}
                   onClick={() => setSelectedProduct(product)}
                   onDelete={() => handleDeleteProduct(product.id)}
+                  onPriceUpdate={handlePriceUpdate}
                 />
               ))}
             </div>

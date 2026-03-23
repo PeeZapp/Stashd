@@ -1,13 +1,23 @@
-import { ExternalLink, Trash2, ShoppingBag, PackageX, CheckCircle } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
+import { ExternalLink, Trash2, ShoppingBag, PackageX, CheckCircle, Pencil } from 'lucide-react';
+import { supabase } from '../lib/supabase';
 import type { Product } from '../lib/types';
 
 interface ProductCardProps {
   product: Product;
   onClick: () => void;
   onDelete: () => void;
+  onPriceUpdate?: (updatedProduct: Product) => void;
 }
 
-export default function ProductCard({ product, onClick, onDelete }: ProductCardProps) {
+export default function ProductCard({ product, onClick, onDelete, onPriceUpdate }: ProductCardProps) {
+  const [editingPrice, setEditingPrice] = useState(false);
+  const [priceInput, setPriceInput] = useState(
+    product.current_price != null ? String(product.current_price) : ''
+  );
+  const [savingPrice, setSavingPrice] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
   const discount =
     product.original_price && product.current_price && product.is_on_sale
       ? Math.round(
@@ -15,8 +25,55 @@ export default function ProductCard({ product, onClick, onDelete }: ProductCardP
         )
       : 0;
 
+  useEffect(() => {
+    if (editingPrice && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [editingPrice]);
+
+  const savePrice = async () => {
+    const num = priceInput.trim() ? parseFloat(priceInput) : null;
+    if (num !== null && (isNaN(num) || num < 0)) return;
+
+    setSavingPrice(true);
+    try {
+      const isOnSale =
+        num !== null && product.original_price !== null && product.original_price > num;
+
+      const { data } = await supabase
+        .from('products')
+        .update({ current_price: num, is_on_sale: isOnSale })
+        .eq('id', product.id)
+        .select()
+        .single();
+
+      if (data && onPriceUpdate) onPriceUpdate(data as Product);
+    } catch {
+      // silently ignore
+    } finally {
+      setSavingPrice(false);
+      setEditingPrice(false);
+    }
+  };
+
+  const handlePriceKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') savePrice();
+    if (e.key === 'Escape') {
+      setPriceInput(product.current_price != null ? String(product.current_price) : '');
+      setEditingPrice(false);
+    }
+  };
+
   return (
-    <div className={`bg-white rounded-xl overflow-hidden border transition-shadow group ${product.is_out_of_stock ? 'border-gray-300 opacity-75' : 'border-gray-200 hover:shadow-lg'}`}>
+    <div
+      className={`bg-white rounded-xl overflow-hidden border transition-shadow group ${
+        product.is_out_of_stock
+          ? 'border-gray-300 opacity-75'
+          : 'border-gray-200 hover:shadow-lg'
+      }`}
+    >
+      {/* Image */}
       <div className="relative aspect-square bg-gray-100 cursor-pointer" onClick={onClick}>
         {product.image_url ? (
           <img
@@ -69,20 +126,67 @@ export default function ProductCard({ product, onClick, onDelete }: ProductCardP
           </h3>
         </div>
 
-        <div className="flex items-baseline space-x-2 mb-3">
-          {product.current_price != null ? (
-            <>
-              <span className={`text-xl font-bold ${product.is_out_of_stock ? 'text-gray-400' : 'text-gray-900'}`}>
-                ${product.current_price.toFixed(2)}
-              </span>
-              {product.is_on_sale && product.original_price && (
-                <span className="text-sm text-gray-500 line-through">
-                  ${product.original_price.toFixed(2)}
+        {/* Price — click to edit */}
+        <div className="mb-3">
+          {editingPrice ? (
+            <div className="flex items-center space-x-1.5" onClick={(e) => e.stopPropagation()}>
+              <div className="relative flex-1">
+                <span className="absolute left-2.5 top-1.5 text-gray-500 text-sm">$</span>
+                <input
+                  ref={inputRef}
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={priceInput}
+                  onChange={(e) => setPriceInput(e.target.value)}
+                  onKeyDown={handlePriceKeyDown}
+                  className="w-full pl-6 pr-2 py-1.5 text-sm border border-gray-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900"
+                  placeholder="0.00"
+                  disabled={savingPrice}
+                />
+              </div>
+              <button
+                onClick={savePrice}
+                disabled={savingPrice}
+                className="px-2.5 py-1.5 bg-gray-900 text-white text-xs rounded-lg hover:bg-gray-800 disabled:opacity-50"
+              >
+                {savingPrice ? '…' : 'Save'}
+              </button>
+              <button
+                onClick={() => {
+                  setPriceInput(product.current_price != null ? String(product.current_price) : '');
+                  setEditingPrice(false);
+                }}
+                className="px-2.5 py-1.5 text-xs text-gray-500 hover:text-gray-700 border border-gray-300 rounded-lg"
+              >
+                ✕
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={(e) => { e.stopPropagation(); setEditingPrice(true); }}
+              className="flex items-baseline space-x-2 group/price hover:opacity-75 transition-opacity text-left w-full"
+              title="Click to set price"
+            >
+              {product.current_price != null ? (
+                <>
+                  <span className={`text-xl font-bold ${product.is_out_of_stock ? 'text-gray-400' : 'text-gray-900'}`}>
+                    ${product.current_price.toFixed(2)}
+                  </span>
+                  {product.is_on_sale && product.original_price && (
+                    <span className="text-sm text-gray-500 line-through">
+                      ${product.original_price.toFixed(2)}
+                    </span>
+                  )}
+                  <Pencil className="w-3 h-3 text-gray-400 opacity-0 group-hover/price:opacity-100 transition-opacity ml-1" />
+                </>
+              ) : (
+                <span className="text-sm text-amber-600 font-medium flex items-center space-x-1">
+                  <span>+ Add price</span>
+                  <Pencil className="w-3 h-3" />
                 </span>
               )}
-            </>
-          ) : (
-            <span className="text-sm text-gray-400 italic">No price set</span>
+            </button>
           )}
         </div>
 
@@ -101,6 +205,7 @@ export default function ProductCard({ product, onClick, onDelete }: ProductCardP
           )}
         </div>
 
+        {/* Actions */}
         <div className="flex items-center space-x-2">
           <a
             href={product.source_url}
