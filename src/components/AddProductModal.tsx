@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { X, Plus, AlertCircle, Loader, ExternalLink, ChevronLeft } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
+import { scrapeProduct } from '../lib/scrapeProduct';
 import type { List } from '../lib/types';
 
 interface AddProductModalProps {
@@ -63,57 +64,21 @@ export default function AddProductModal({ lists, onClose, onSuccess }: AddProduc
     setStep('fetching');
 
     try {
-      // Use microlink.io — free metadata scraping API, no key required
-      const apiUrl = `https://api.microlink.io?url=${encodeURIComponent(url)}&screenshot=false`;
-      const response = await fetch(apiUrl, {
-        headers: { Accept: 'application/json' },
-      });
-      const json = await response.json();
-
-      if (json.status !== 'success') {
-        throw new Error('Could not read page metadata');
-      }
-
-      const d = json.data ?? {};
-
-      // Extract store name from hostname
-      const storeFromHost = (() => {
-        try {
-          const host = new URL(url).hostname.replace(/^www\./, '');
-          const name = host.split('.')[0];
-          return name.charAt(0).toUpperCase() + name.slice(1);
-        } catch {
-          return '';
-        }
-      })();
-
-      // Extract price — microlink returns price as a string like "$29.99"
-      const rawPrice: string | null = d.price ?? null;
-      let currentPrice = '';
-      if (rawPrice) {
-        const num = parseFloat(rawPrice.replace(/[^0-9.]/g, ''));
-        if (!isNaN(num)) currentPrice = String(num);
-      }
-
-      // Detect out-of-stock from title + description
-      const combinedText = [d.title, d.description].filter(Boolean).join(' ').toLowerCase();
-      const outOfStockKeywords = ['out of stock', 'out-of-stock', 'sold out', 'sold-out', 'unavailable', 'not available', 'currently unavailable'];
-      const detectedOutOfStock = outOfStockKeywords.some((kw) => combinedText.includes(kw));
+      const scraped = await scrapeProduct(url);
 
       setFormData({
         sourceUrl: url,
-        title: d.title ?? '',
-        currentPrice,
-        originalPrice: '',
-        imageUrl: d.image?.url ?? d.logo?.url ?? '',
-        storeName: d.publisher ?? storeFromHost,
-        description: d.description ?? '',
-        isOutOfStock: detectedOutOfStock,
+        title: scraped.title ?? '',
+        currentPrice: scraped.current_price != null ? String(scraped.current_price) : '',
+        originalPrice: scraped.original_price != null ? String(scraped.original_price) : '',
+        imageUrl: scraped.image_url ?? '',
+        storeName: scraped.store_name ?? '',
+        description: scraped.description ?? '',
+        isOutOfStock: scraped.is_out_of_stock,
       });
       setStep('details');
     } catch (err) {
       console.error('Fetch error:', err);
-      // Fall back to manual entry but keep the URL
       setFormData(emptyForm(url));
       setError('Could not read that page automatically — please fill in the details below.');
       setStep('details');

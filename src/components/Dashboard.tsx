@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Plus, ShoppingBag, LogOut, ArrowLeft, Share2 } from 'lucide-react';
+import { Plus, ShoppingBag, LogOut, ArrowLeft, Share2, RefreshCw } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
+import { refreshProduct } from '../lib/refreshProduct';
 import type { Product, List } from '../lib/types';
 import ProductCard from './ProductCard';
 import AddProductModal from './AddProductModal';
@@ -12,7 +13,7 @@ import NotificationsPanel from './NotificationsPanel';
 type View = { type: 'lists' } | { type: 'list-detail'; listId: string };
 
 export default function Dashboard() {
-  const { signOut, profile } = useAuth();
+  const { signOut, profile, user } = useAuth();
   const [listsWithProducts, setListsWithProducts] = useState<ListWithProducts[]>([]);
   const [allLists, setAllLists] = useState<List[]>([]);
   const [view, setView] = useState<View>({ type: 'lists' });
@@ -21,6 +22,8 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [creatingList, setCreatingList] = useState(false);
   const [newListName, setNewListName] = useState('');
+  const [refreshingAll, setRefreshingAll] = useState(false);
+  const [refreshAllStatus, setRefreshAllStatus] = useState<string | null>(null);
 
   useEffect(() => {
     loadData();
@@ -119,6 +122,49 @@ export default function Dashboard() {
     setNewListName('');
     setCreatingList(false);
     await loadData();
+  };
+
+  const handleRefreshAll = async () => {
+    if (!user || refreshingAll) return;
+    setRefreshingAll(true);
+    setRefreshAllStatus(null);
+
+    // Collect unique products across all lists
+    const seen = new Set<string>();
+    const allProducts: Product[] = [];
+    for (const list of listsWithProducts) {
+      for (const p of list.products) {
+        if (!seen.has(p.id)) {
+          seen.add(p.id);
+          allProducts.push(p);
+        }
+      }
+    }
+
+    if (allProducts.length === 0) {
+      setRefreshAllStatus('No products to refresh.');
+      setRefreshingAll(false);
+      return;
+    }
+
+    let updated = 0;
+    for (let i = 0; i < allProducts.length; i++) {
+      setRefreshAllStatus(`Checking ${i + 1} of ${allProducts.length}…`);
+      try {
+        const result = await refreshProduct(allProducts[i], user.id);
+        if (result.updated) updated++;
+      } catch {
+        // skip failed products silently
+      }
+    }
+
+    await loadData();
+    setRefreshAllStatus(
+      updated > 0
+        ? `Done — ${updated} product${updated !== 1 ? 's' : ''} updated.`
+        : `Done — everything is up to date.`
+    );
+    setRefreshingAll(false);
   };
 
   // ── Views ─────────────────────────────────────────────────
@@ -272,15 +318,35 @@ export default function Dashboard() {
             </p>
           </div>
 
-          {/* Create new list button */}
-          <button
-            onClick={() => setCreatingList(true)}
-            className="flex items-center space-x-2 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium"
-          >
-            <Plus className="w-4 h-4" />
-            <span>New List</span>
-          </button>
+          {/* Action buttons */}
+          <div className="flex items-center gap-2 flex-wrap">
+            {listsWithProducts.some((l) => l.products.length > 0) && (
+              <button
+                onClick={handleRefreshAll}
+                disabled={refreshingAll}
+                className="flex items-center space-x-2 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm font-medium"
+              >
+                <RefreshCw className={`w-4 h-4 ${refreshingAll ? 'animate-spin' : ''}`} />
+                <span>{refreshingAll ? (refreshAllStatus ?? 'Refreshing…') : 'Refresh All'}</span>
+              </button>
+            )}
+            <button
+              onClick={() => setCreatingList(true)}
+              className="flex items-center space-x-2 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium"
+            >
+              <Plus className="w-4 h-4" />
+              <span>New List</span>
+            </button>
+          </div>
         </div>
+
+        {/* Refresh status message */}
+        {refreshAllStatus && !refreshingAll && (
+          <div className="mb-4 px-4 py-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800 flex items-center justify-between">
+            <span>{refreshAllStatus}</span>
+            <button onClick={() => setRefreshAllStatus(null)} className="text-blue-400 hover:text-blue-600 ml-4 text-xs">Dismiss</button>
+          </div>
+        )}
 
         {/* Create list inline form */}
         {creatingList && (
