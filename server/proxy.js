@@ -344,6 +344,9 @@ async function searchEbay(query, sku) {
       { signal: AbortSignal.timeout(8000) }
     );
     const json = await res.json();
+    const ack = json?.findItemsByKeywordsResponse?.[0]?.ack?.[0];
+    const errMsg = json?.findItemsByKeywordsResponse?.[0]?.errorMessage?.[0]?.error?.[0]?.message?.[0];
+    if (ack !== 'Success') console.log(`[eBay] ack=${ack} error=${errMsg}`);
     const items =
       json?.findItemsByKeywordsResponse?.[0]?.searchResult?.[0]?.item ?? [];
 
@@ -415,7 +418,10 @@ app.get('/scrape', async (req, res) => {
     const storeName = storeFromUrl(url);
     const urlQuery = queryFromUrl(url);
     const ebayQuery = [storeName, urlQuery].filter(Boolean).join(' ');
+    console.log(`[bot-protection] detected for ${url}`);
+    console.log(`[bot-protection] eBay query: "${ebayQuery}"`);
     const ebay = ebayQuery ? await searchEbay(ebayQuery, null) : null;
+    console.log(`[bot-protection] eBay result:`, JSON.stringify(ebay));
 
     return res.status(403).json({
       error: 'bot_protection',
