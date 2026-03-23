@@ -117,25 +117,49 @@ export default function AddProductModal({ lists, onClose, onSuccess }: AddProduc
       const isOnSale =
         currentPrice !== null && originalPrice !== null && originalPrice > currentPrice;
 
-      const { data: product, error: productError } = await supabase
+      // Build insert payload — only include columns confirmed to exist.
+      // New columns (is_out_of_stock, sku, price_source) require the migration in
+      // supabase/migrations/20260323000002_add_sku_and_price_source.sql to be run first.
+      // We try with the full payload and gracefully retry without extended columns on error.
+      const basePayload = {
+        user_id: user.id,
+        title: formData.title.trim(),
+        source_url: formData.sourceUrl.trim(),
+        current_price: currentPrice,
+        original_price: originalPrice,
+        is_on_sale: isOnSale,
+        image_url: formData.imageUrl.trim() || null,
+        store_name: formData.storeName.trim() || null,
+        description: formData.description.trim() || null,
+      };
+
+      const extendedPayload = {
+        ...basePayload,
+        is_out_of_stock: formData.isOutOfStock,
+        sku: formData.sku.trim() || null,
+        price_source: formData.priceSource,
+      };
+
+      let productInsert = await supabase
         .from('products')
-        .insert({
-          user_id: user.id,
-          title: formData.title.trim(),
-          source_url: formData.sourceUrl.trim(),
-          current_price: currentPrice,
-          original_price: originalPrice,
-          is_on_sale: isOnSale,
-          is_out_of_stock: formData.isOutOfStock,
-          image_url: formData.imageUrl.trim() || null,
-          store_name: formData.storeName.trim() || null,
-          description: formData.description.trim() || null,
-          sku: formData.sku.trim() || null,
-          price_source: formData.priceSource,
-        })
+        .insert(extendedPayload)
         .select()
         .single();
 
+      // If extended columns don't exist yet (migration not run), retry with base payload
+      if (
+        productInsert.error &&
+        (productInsert.error.message.includes('column') ||
+          productInsert.error.code === 'PGRST204')
+      ) {
+        productInsert = await supabase
+          .from('products')
+          .insert(basePayload)
+          .select()
+          .single();
+      }
+
+      const { data: product, error: productError } = productInsert;
       if (productError) throw productError;
 
       let allListIds = [...selectedListIds];
@@ -161,7 +185,13 @@ export default function AddProductModal({ lists, onClose, onSuccess }: AddProduc
       onSuccess();
     } catch (err: unknown) {
       console.error('Error saving product:', err);
-      setError(err instanceof Error ? err.message : 'Failed to save product');
+      const errObj = err as Record<string, unknown>;
+      const msg = typeof errObj?.message === 'string'
+        ? errObj.message
+        : 'Failed to save product. Please try again.';
+      setError(msg);
+      // Scroll to top of modal so error is visible
+      document.querySelector('.modal-scroll-top')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } finally {
       setLoading(false);
     }
@@ -240,7 +270,7 @@ export default function AddProductModal({ lists, onClose, onSuccess }: AddProduc
             <Loader className="w-10 h-10 text-gray-900 animate-spin" />
             <p className="text-gray-700 font-medium">Fetching product details…</p>
             <p className="text-sm text-gray-400 text-center max-w-xs">
-              Reading product info and checking eBay for pricing. This usually takes just a second.
+              Reading product details from the page. This usually takes just a second.
             </p>
           </div>
         )}

@@ -180,36 +180,17 @@ export async function scrapeProduct(url: string): Promise<ScrapedProduct> {
   const proxyResult = await fetchViaProxy(url);
   if (proxyResult && (proxyResult.title || proxyResult.image_url)) {
     if (!proxyResult.store_name) proxyResult.store_name = storeFromUrl(url);
-
-    // 2. If no price from scraping, try eBay
-    if (proxyResult.current_price === null && proxyResult.title) {
-      const ebayPrice = await fetchEbayPrice(proxyResult.title, proxyResult.sku);
-      if (ebayPrice !== null) {
-        proxyResult.current_price = ebayPrice;
-        proxyResult.price_source = 'ebay';
-      }
-    }
-
     return proxyResult;
   }
 
-  // 3. CORS proxy fallback
+  // 2. CORS proxy fallback
   const corsResult = await fetchViaCorsProxy(url);
   if (corsResult) {
     if (!corsResult.store_name) corsResult.store_name = storeFromUrl(url);
-
-    if (corsResult.current_price === null && corsResult.title) {
-      const ebayPrice = await fetchEbayPrice(corsResult.title, null);
-      if (ebayPrice !== null) {
-        corsResult.current_price = ebayPrice;
-        corsResult.price_source = 'ebay';
-      }
-    }
-
     return corsResult;
   }
 
-  // 4. Last resort — just store what we know
+  // 3. Last resort — just store what we know
   return {
     title: null,
     current_price: null,
