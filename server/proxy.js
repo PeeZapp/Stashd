@@ -313,73 +313,88 @@ ${pageText}`;
   }
 }
 
-// ── eBay Finding API ───────────────────────────────────────
+// ── eBay Browse API (OAuth Client Credentials) ─────────────
+
+let _ebayToken = null;
+let _ebayTokenExpiry = 0;
+
+async function getEbayToken() {
+  if (_ebayToken && Date.now() < _ebayTokenExpiry) return _ebayToken;
+  const appId = process.env.EBAY_APP_ID;
+  const certId = process.env.EBAY_CERT_ID;
+  if (!appId || !certId) return null;
+  try {
+    const credentials = Buffer.from(`${appId}:${certId}`).toString('base64');
+    const res = await fetch('https://api.ebay.com/identity/v1/oauth2/token', {
+      method: 'POST',
+      headers: {
+        Authorization: `Basic ${credentials}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: 'grant_type=client_credentials&scope=https%3A%2F%2Fapi.ebay.com%2Foauth%2Fapi_scope',
+      signal: AbortSignal.timeout(8000),
+    });
+    const data = await res.json();
+    if (data.access_token) {
+      _ebayToken = data.access_token;
+      _ebayTokenExpiry = Date.now() + ((data.expires_in ?? 7200) - 60) * 1000;
+      console.log('[eBay] OAuth token obtained successfully');
+      return _ebayToken;
+    }
+    console.log('[eBay] Token error:', JSON.stringify(data));
+    return null;
+  } catch (e) {
+    console.log('[eBay] Token fetch failed:', e.message);
+    return null;
+  }
+}
 
 async function searchEbay(query, sku) {
-  const appId = process.env.EBAY_APP_ID;
-  if (!appId) return null;
+  const token = await getEbayToken();
+  if (!token) return null;
 
-  // Prefer SKU/UPC search if we have a numeric identifier (GTIN/UPC)
   const isNumericId = sku && /^\d{8,14}$/.test(sku.replace(/-/g, ''));
-  const keywords = isNumericId ? sku : query;
+  const q = isNumericId ? sku : query;
 
   const params = new URLSearchParams({
-    'OPERATION-NAME': 'findItemsByKeywords',
-    'SERVICE-VERSION': '1.0.0',
-    'SECURITY-APPNAME': appId,
-    'RESPONSE-DATA-FORMAT': 'JSON',
-    keywords,
-    'paginationInput.entriesPerPage': '10',
-    'itemFilter(0).name': 'ListingType',
-    'itemFilter(0).value(0)': 'FixedPrice',
-    'itemFilter(0).value(1)': 'StoreInventory',
-    'itemFilter(1).name': 'Condition',
-    'itemFilter(1).value': 'New',
-    sortOrder: 'PricePlusShippingLowest',
+    q,
+    filter: 'conditions:{NEW}',
+    sort: 'price',
+    limit: '5',
   });
 
   try {
     const res = await fetch(
-      `https://svcs.ebay.com/services/search/FindingService/v1?${params}`,
-      { signal: AbortSignal.timeout(8000) }
+      `https://api.ebay.com/buy/browse/v1/item_summary/search?${params}`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'X-EBAY-C-MARKETPLACE-ID': 'EBAY_AU',
+        },
+        signal: AbortSignal.timeout(8000),
+      }
     );
     const json = await res.json();
-
-    // Top-level error (e.g. keyset disabled, rate limited)
-    if (json?.errorMessage) {
-      const topErr = json.errorMessage?.[0]?.error?.[0];
-      console.log(`[eBay] top-level error id=${topErr?.errorId?.[0]} msg=${topErr?.message?.[0]}`);
+    if (json.errors) {
+      console.log('[eBay] Browse API error:', JSON.stringify(json.errors[0]));
       return null;
     }
-
-    const ack = json?.findItemsByKeywordsResponse?.[0]?.ack?.[0];
-    const errMsg = json?.findItemsByKeywordsResponse?.[0]?.errorMessage?.[0]?.error?.[0]?.message?.[0];
-    if (ack !== 'Success') console.log(`[eBay] ack=${ack} error=${errMsg}`);
-    const items =
-      json?.findItemsByKeywordsResponse?.[0]?.searchResult?.[0]?.item ?? [];
-
+    const items = json.itemSummaries ?? [];
     if (!items.length) return null;
 
-    // Pick the lowest priced new item
-    let bestItem = null;
-    let bestPrice = Infinity;
-    for (const item of items) {
-      const raw = item?.sellingStatus?.[0]?.currentPrice?.[0]?.['__value__'];
-      const price = raw ? parseFloat(raw) : null;
-      if (price && price > 0 && price < bestPrice) {
-        bestPrice = price;
-        bestItem = item;
-      }
-    }
-
-    if (!bestItem) return null;
-
+    items.sort(
+      (a, b) =>
+        parseFloat(a.price?.value ?? Infinity) -
+        parseFloat(b.price?.value ?? Infinity)
+    );
+    const best = items[0];
     return {
-      price: Math.round(bestPrice * 100) / 100,
-      title: bestItem?.title?.[0] ?? null,
-      image: bestItem?.galleryURL?.[0] ?? null,
+      price: best.price?.value ? Math.round(parseFloat(best.price.value) * 100) / 100 : null,
+      title: best.title ?? null,
+      image: best.image?.imageUrl ?? null,
     };
-  } catch {
+  } catch (e) {
+    console.log('[eBay] Browse API fetch failed:', e.message);
     return null;
   }
 }
@@ -552,18 +567,25 @@ app.get('/ebay-price', async (req, res) => {
     return res.status(400).json({ error: 'query or sku required' });
   }
 
-  if (!process.env.EBAY_APP_ID) {
-    return res.status(503).json({ error: 'EBAY_APP_ID not configured', price: null });
+  if (!process.env.EBAY_APP_ID || !process.env.EBAY_CERT_ID) {
+    return res.status(503).json({ error: 'EBAY_APP_ID and EBAY_CERT_ID required', price: null });
   }
 
   const price = await searchEbayPrice(query, sku);
   res.json({ price, source: 'ebay' });
 });
 
-app.get('/health', (_req, res) => res.json({ ok: true, ebay: !!process.env.EBAY_APP_ID }));
+app.get('/health', (_req, res) => res.json({
+  ok: true,
+  ebay: !!(process.env.EBAY_APP_ID && process.env.EBAY_CERT_ID),
+}));
 
 app.listen(PORT, () => {
-  const ebayStatus = process.env.EBAY_APP_ID ? '✓ eBay API configured' : '⚠ EBAY_APP_ID not set — price lookup disabled';
+  const hasApp = !!process.env.EBAY_APP_ID;
+  const hasCert = !!process.env.EBAY_CERT_ID;
+  const ebayStatus = (hasApp && hasCert)
+    ? '✓ eBay Browse API configured (App ID + Cert ID)'
+    : `⚠ eBay incomplete — ${!hasApp ? 'EBAY_APP_ID' : 'EBAY_CERT_ID'} missing`;
   console.log(`Scrape proxy running on http://localhost:${PORT}`);
   console.log(ebayStatus);
 });
