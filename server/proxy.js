@@ -344,6 +344,14 @@ async function searchEbay(query, sku) {
       { signal: AbortSignal.timeout(8000) }
     );
     const json = await res.json();
+
+    // Top-level error (e.g. keyset disabled, rate limited)
+    if (json?.errorMessage) {
+      const topErr = json.errorMessage?.[0]?.error?.[0];
+      console.log(`[eBay] top-level error id=${topErr?.errorId?.[0]} msg=${topErr?.message?.[0]}`);
+      return null;
+    }
+
     const ack = json?.findItemsByKeywordsResponse?.[0]?.ack?.[0];
     const errMsg = json?.findItemsByKeywordsResponse?.[0]?.errorMessage?.[0]?.error?.[0]?.message?.[0];
     if (ack !== 'Success') console.log(`[eBay] ack=${ack} error=${errMsg}`);
