@@ -19,30 +19,24 @@ export default function SharedListView({ shareToken }: SharedListViewProps) {
 
   const loadSharedList = async () => {
     try {
-      const { data: listData, error: listError } = await supabase
+      const { data, error: listError } = await supabase
         .from('lists')
-        .select('*')
+        .select('*, list_products(products(*))')
         .eq('share_token', shareToken)
         .eq('is_shared', true)
         .maybeSingle();
 
       if (listError) throw listError;
-      if (!listData) {
+      if (!data) {
         setError('List not found or not shared');
         setLoading(false);
         return;
       }
 
+      const { list_products, ...listData } = data as any;
       setList(listData);
 
-      const { data: listProducts, error: productsError } = await supabase
-        .from('list_products')
-        .select('product_id, products(*)')
-        .eq('list_id', listData.id);
-
-      if (productsError) throw productsError;
-
-      const prods = (listProducts?.map((lp: { products: Product }) => lp.products) || []).filter(Boolean) as Product[];
+      const prods = (list_products?.map((lp: { products: Product }) => lp.products) || []).filter(Boolean) as Product[];
       setProducts(prods);
     } catch (err) {
       console.error('Error loading shared list:', err);
