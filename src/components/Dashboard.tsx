@@ -1,22 +1,25 @@
 import { useState, useEffect } from 'react';
-import { Plus, ShoppingBag, LogOut, List as ListIcon, Filter } from 'lucide-react';
+import { Plus, ShoppingBag, LogOut, ArrowLeft, Share2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import type { Product, List } from '../lib/types';
 import ProductCard from './ProductCard';
 import AddProductModal from './AddProductModal';
-import ListsPanel from './ListsPanel';
 import ProductDetailModal from './ProductDetailModal';
+import ListCard, { type ListWithProducts } from './ListCard';
+
+type View = { type: 'lists' } | { type: 'list-detail'; listId: string };
 
 export default function Dashboard() {
   const { signOut, profile } = useAuth();
-  const [products, setProducts] = useState<Product[]>([]);
-  const [lists, setLists] = useState<List[]>([]);
+  const [listsWithProducts, setListsWithProducts] = useState<ListWithProducts[]>([]);
+  const [allLists, setAllLists] = useState<List[]>([]);
+  const [view, setView] = useState<View>({ type: 'lists' });
   const [showAddProduct, setShowAddProduct] = useState(false);
-  const [showLists, setShowLists] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
-  const [sortBy, setSortBy] = useState<'recent' | 'price-low' | 'price-high' | 'sale'>('recent');
   const [loading, setLoading] = useState(true);
+  const [creatingList, setCreatingList] = useState(false);
+  const [newListName, setNewListName] = useState('');
 
   useEffect(() => {
     loadData();
@@ -24,28 +27,19 @@ export default function Dashboard() {
 
   const loadData = async () => {
     setLoading(true);
-    await Promise.all([loadProducts(), loadLists()]);
+    await loadLists();
     setLoading(false);
-  };
-
-  const loadProducts = async () => {
-    const { data, error } = await supabase
-      .from('products')
-      .select('*')
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      console.error('Error loading products:', error);
-      return;
-    }
-
-    setProducts(data || []);
   };
 
   const loadLists = async () => {
     const { data, error } = await supabase
       .from('lists')
-      .select('*')
+      .select(`
+        *,
+        list_products (
+          products (*)
+        )
+      `)
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -53,7 +47,25 @@ export default function Dashboard() {
       return;
     }
 
-    setLists(data || []);
+    const normalized: ListWithProducts[] = (data || []).map((list) => {
+      const rawList = list as unknown as Record<string, unknown>;
+      const listProducts = (rawList.list_products as Array<{ products: Product | null }>) || [];
+      return {
+        id: rawList.id as string,
+        user_id: rawList.user_id as string,
+        name: rawList.name as string,
+        is_shared: rawList.is_shared as boolean,
+        share_token: rawList.share_token as string | null,
+        created_at: rawList.created_at as string,
+        updated_at: rawList.updated_at as string,
+        products: listProducts.map((lp) => lp.products).filter(Boolean) as Product[],
+      };
+    });
+
+    setListsWithProducts(normalized);
+    setAllLists(
+      normalized.map(({ products: _p, ...l }) => l as List)
+    );
   };
 
   const handleProductAdded = () => {
@@ -63,164 +75,279 @@ export default function Dashboard() {
 
   const handleDeleteProduct = async (productId: string) => {
     if (!confirm('Are you sure you want to delete this product?')) return;
-
-    const { error } = await supabase
-      .from('products')
-      .delete()
-      .eq('id', productId);
-
-    if (error) {
-      console.error('Error deleting product:', error);
-      return;
-    }
-
-    loadProducts();
+    const { error } = await supabase.from('products').delete().eq('id', productId);
+    if (error) { console.error(error); return; }
+    await loadData();
   };
 
-  const getFilteredProducts = () => {
-    let filtered = [...products];
-
-    switch (sortBy) {
-      case 'price-low':
-        filtered.sort((a, b) => (a.current_price ?? Infinity) - (b.current_price ?? Infinity));
-        break;
-      case 'price-high':
-        filtered.sort((a, b) => (b.current_price ?? -Infinity) - (a.current_price ?? -Infinity));
-        break;
-      case 'sale':
-        filtered = filtered.filter((p) => p.is_on_sale);
-        break;
-      case 'recent':
-      default:
-        filtered.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  const handleDeleteList = async (listId: string) => {
+    if (!confirm('Are you sure you want to delete this list?')) return;
+    const { error } = await supabase.from('lists').delete().eq('id', listId);
+    if (error) { console.error(error); return; }
+    if (view.type === 'list-detail' && view.listId === listId) {
+      setView({ type: 'lists' });
     }
-
-    return filtered;
+    await loadData();
   };
 
-  const filteredProducts = getFilteredProducts();
+  const handleShareList = async (list: ListWithProducts) => {
+    let token = list.share_token;
+    if (!list.is_shared || !token) {
+      token = token ?? crypto.randomUUID();
+      const { error } = await supabase
+        .from('lists')
+        .update({ is_shared: true, share_token: token })
+        .eq('id', list.id);
+      if (error) { console.error(error); return; }
+      await loadData();
+    }
+    const shareUrl = `${window.location.origin}/share/list/${token}`;
+    navigator.clipboard.writeText(shareUrl);
+    alert('Share link copied to clipboard!');
+  };
 
-  return (
-    <div className="min-h-screen bg-gray-50">
-      <nav className="bg-white border-b border-gray-200 sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <ShoppingBag className="w-7 h-7 text-gray-900" strokeWidth={1.5} />
-              <span className="text-xl font-semibold text-gray-900">Stashd</span>
-            </div>
+  const handleCreateList = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newListName.trim()) return;
+    const { error } = await supabase.from('lists').insert({
+      user_id: (await supabase.auth.getUser()).data.user?.id ?? '',
+      name: newListName.trim(),
+      share_token: crypto.randomUUID(),
+    });
+    if (error) { console.error(error); return; }
+    setNewListName('');
+    setCreatingList(false);
+    await loadData();
+  };
 
-            <div className="flex items-center space-x-2">
+  // ── Views ─────────────────────────────────────────────────
+
+  const activeList =
+    view.type === 'list-detail'
+      ? listsWithProducts.find((l) => l.id === view.listId) ?? null
+      : null;
+
+  const navBar = (
+    <nav className="bg-white border-b border-gray-200 sticky top-0 z-40">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            {view.type === 'list-detail' ? (
               <button
-                onClick={() => setShowLists(true)}
-                className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg transition-colors flex items-center space-x-2"
+                onClick={() => setView({ type: 'lists' })}
+                className="flex items-center space-x-2 text-gray-700 hover:text-gray-900 transition-colors mr-1"
               >
-                <ListIcon className="w-5 h-5" />
-                <span className="hidden sm:inline">Lists</span>
+                <ArrowLeft className="w-5 h-5" />
               </button>
+            ) : null}
+            <ShoppingBag className="w-7 h-7 text-gray-900" strokeWidth={1.5} />
+            <span className="text-xl font-semibold text-gray-900">Stashd</span>
+          </div>
+
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={() => setShowAddProduct(true)}
+              className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors flex items-center space-x-2"
+            >
+              <Plus className="w-5 h-5" />
+              <span className="hidden sm:inline">Add Product</span>
+            </button>
+            <button
+              onClick={signOut}
+              className="p-2 text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+              title="Sign Out"
+            >
+              <LogOut className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+      </div>
+    </nav>
+  );
+
+  // ── List detail view ──────────────────────────────────────
+  if (view.type === 'list-detail' && activeList) {
+    const hasSale = activeList.products.some((p) => p.is_on_sale);
+    const total = activeList.products.reduce((s, p) => s + (p.current_price ?? 0), 0);
+
+    return (
+      <div className="min-h-screen bg-gray-50">
+        {navBar}
+        <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+          {/* Header */}
+          <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900 mb-1">{activeList.name}</h1>
+              <div className="flex flex-wrap items-center gap-3 text-gray-500 text-sm">
+                <span>{activeList.products.length} item{activeList.products.length !== 1 ? 's' : ''}</span>
+                {total > 0 && (
+                  <>
+                    <span>·</span>
+                    <span className="font-semibold text-gray-900 text-base">${total.toFixed(2)} total</span>
+                  </>
+                )}
+                {hasSale && (
+                  <>
+                    <span>·</span>
+                    <span className="text-red-600 font-medium">Items on sale!</span>
+                  </>
+                )}
+              </div>
+            </div>
+            <button
+              onClick={() => handleShareList(activeList)}
+              className="flex items-center space-x-2 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium"
+            >
+              <Share2 className="w-4 h-4" />
+              <span>{activeList.is_shared ? 'Copy share link' : 'Share list'}</span>
+            </button>
+          </div>
+
+          {activeList.products.length === 0 ? (
+            <div className="text-center py-20">
+              <ShoppingBag className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+              <h3 className="text-xl font-semibold text-gray-900 mb-2">No products in this list</h3>
+              <p className="text-gray-600 mb-6">Add products and assign them to this list</p>
               <button
                 onClick={() => setShowAddProduct(true)}
-                className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors flex items-center space-x-2"
+                className="px-6 py-3 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors inline-flex items-center space-x-2"
               >
                 <Plus className="w-5 h-5" />
-                <span className="hidden sm:inline">Add Product</span>
-              </button>
-              <button
-                onClick={signOut}
-                className="p-2 text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
-                title="Sign Out"
-              >
-                <LogOut className="w-5 h-5" />
+                <span>Add Product</span>
               </button>
             </div>
-          </div>
-        </div>
-      </nav>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+              {activeList.products.map((product) => (
+                <ProductCard
+                  key={product.id}
+                  product={product}
+                  onClick={() => setSelectedProduct(product)}
+                  onDelete={() => handleDeleteProduct(product.id)}
+                />
+              ))}
+            </div>
+          )}
+        </main>
+
+        {showAddProduct && (
+          <AddProductModal
+            lists={allLists}
+            onClose={() => setShowAddProduct(false)}
+            onSuccess={handleProductAdded}
+          />
+        )}
+
+        {selectedProduct && (
+          <ProductDetailModal
+            product={selectedProduct}
+            lists={allLists}
+            onClose={() => setSelectedProduct(null)}
+            onUpdate={loadData}
+            onDelete={() => {
+              handleDeleteProduct(selectedProduct.id);
+              setSelectedProduct(null);
+            }}
+          />
+        )}
+      </div>
+    );
+  }
+
+  // ── Lists overview ────────────────────────────────────────
+  return (
+    <div className="min-h-screen bg-gray-50">
+      {navBar}
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">
-            Welcome back, {profile?.name || 'there'}
-          </h1>
-          <p className="text-gray-600">
-            You have {products.length} saved product{products.length !== 1 ? 's' : ''}
-          </p>
+        <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900 mb-1">
+              Welcome back, {profile?.name || 'there'}
+            </h1>
+            <p className="text-gray-600">
+              {listsWithProducts.length} list{listsWithProducts.length !== 1 ? 's' : ''}
+            </p>
+          </div>
+
+          {/* Create new list button */}
+          <button
+            onClick={() => setCreatingList(true)}
+            className="flex items-center space-x-2 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium"
+          >
+            <Plus className="w-4 h-4" />
+            <span>New List</span>
+          </button>
         </div>
 
-        <div className="mb-6 flex flex-wrap items-center gap-3">
-          <div className="flex items-center space-x-2">
-            <Filter className="w-5 h-5 text-gray-500" />
-            <span className="text-sm font-medium text-gray-700">Sort by:</span>
-          </div>
-          <div className="flex flex-wrap gap-2">
+        {/* Create list inline form */}
+        {creatingList && (
+          <form
+            onSubmit={handleCreateList}
+            className="mb-6 bg-white rounded-xl border border-gray-200 p-4 flex items-center space-x-3"
+          >
+            <input
+              type="text"
+              value={newListName}
+              onChange={(e) => setNewListName(e.target.value)}
+              placeholder="List name"
+              autoFocus
+              className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent text-sm"
+            />
             <button
-              onClick={() => setSortBy('recent')}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                sortBy === 'recent'
-                  ? 'bg-gray-900 text-white'
-                  : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
-              }`}
+              type="submit"
+              disabled={!newListName.trim()}
+              className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium transition-colors"
             >
-              Recently Added
+              Create
             </button>
             <button
-              onClick={() => setSortBy('price-low')}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                sortBy === 'price-low'
-                  ? 'bg-gray-900 text-white'
-                  : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
-              }`}
+              type="button"
+              onClick={() => { setCreatingList(false); setNewListName(''); }}
+              className="px-3 py-2 text-gray-500 hover:text-gray-700 text-sm transition-colors"
             >
-              Price: Low to High
+              Cancel
             </button>
-            <button
-              onClick={() => setSortBy('price-high')}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                sortBy === 'price-high'
-                  ? 'bg-gray-900 text-white'
-                  : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
-              }`}
-            >
-              Price: High to Low
-            </button>
-            <button
-              onClick={() => setSortBy('sale')}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                sortBy === 'sale'
-                  ? 'bg-gray-900 text-white'
-                  : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
-              }`}
-            >
-              On Sale
-            </button>
-          </div>
-        </div>
+          </form>
+        )}
 
         {loading ? (
           <div className="text-center py-12">
-            <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900"></div>
+            <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900" />
           </div>
-        ) : filteredProducts.length === 0 ? (
+        ) : listsWithProducts.length === 0 && !creatingList ? (
           <div className="text-center py-20">
             <ShoppingBag className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-            <h3 className="text-xl font-semibold text-gray-900 mb-2">No products yet</h3>
-            <p className="text-gray-600 mb-6">Start by adding your first product</p>
-            <button
-              onClick={() => setShowAddProduct(true)}
-              className="px-6 py-3 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors inline-flex items-center space-x-2"
-            >
-              <Plus className="w-5 h-5" />
-              <span>Add Your First Product</span>
-            </button>
+            <h3 className="text-xl font-semibold text-gray-900 mb-2">No lists yet</h3>
+            <p className="text-gray-600 mb-6">
+              Create a list, then add products to it
+            </p>
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              <button
+                onClick={() => setCreatingList(true)}
+                className="px-6 py-3 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors inline-flex items-center space-x-2"
+              >
+                <Plus className="w-5 h-5" />
+                <span>Create Your First List</span>
+              </button>
+              <button
+                onClick={() => setShowAddProduct(true)}
+                className="px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors inline-flex items-center space-x-2"
+              >
+                <Plus className="w-5 h-5" />
+                <span>Add a Product</span>
+              </button>
+            </div>
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-            {filteredProducts.map((product) => (
-              <ProductCard
-                key={product.id}
-                product={product}
-                onClick={() => setSelectedProduct(product)}
-                onDelete={() => handleDeleteProduct(product.id)}
+            {listsWithProducts.map((list) => (
+              <ListCard
+                key={list.id}
+                list={list}
+                onClick={() => setView({ type: 'list-detail', listId: list.id })}
+                onDelete={() => handleDeleteList(list.id)}
+                onShare={() => handleShareList(list)}
               />
             ))}
           </div>
@@ -229,26 +356,18 @@ export default function Dashboard() {
 
       {showAddProduct && (
         <AddProductModal
-          lists={lists}
+          lists={allLists}
           onClose={() => setShowAddProduct(false)}
           onSuccess={handleProductAdded}
-        />
-      )}
-
-      {showLists && (
-        <ListsPanel
-          lists={lists}
-          onClose={() => setShowLists(false)}
-          onListsChanged={loadLists}
         />
       )}
 
       {selectedProduct && (
         <ProductDetailModal
           product={selectedProduct}
-          lists={lists}
+          lists={allLists}
           onClose={() => setSelectedProduct(null)}
-          onUpdate={loadProducts}
+          onUpdate={loadData}
           onDelete={() => {
             handleDeleteProduct(selectedProduct.id);
             setSelectedProduct(null);
