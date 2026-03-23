@@ -175,6 +175,28 @@ export default function AddProductModal({ lists, onClose, onSuccess }: AddProduc
         if (newList) allListIds = [...allListIds, newList.id];
       }
 
+      // If still no list selected, use or create an "Uncategorised" list
+      if (allListIds.length === 0 && product) {
+        const { data: existing } = await supabase
+          .from('lists')
+          .select('id')
+          .eq('user_id', user.id)
+          .eq('name', 'Uncategorised')
+          .maybeSingle();
+
+        if (existing) {
+          allListIds = [existing.id];
+        } else {
+          const { data: created, error: createError } = await supabase
+            .from('lists')
+            .insert({ user_id: user.id, name: 'Uncategorised', share_token: crypto.randomUUID() })
+            .select()
+            .single();
+          if (createError) throw createError;
+          if (created) allListIds = [created.id];
+        }
+      }
+
       if (allListIds.length > 0 && product) {
         const { error: lpError } = await supabase
           .from('list_products')
