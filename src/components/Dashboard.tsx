@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, ShoppingBag, LogOut, List as ListIcon, Filter, Trash2 } from 'lucide-react';
+import { Plus, ShoppingBag, LogOut, List as ListIcon, Filter } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import type { Product, List } from '../lib/types';
@@ -12,7 +12,6 @@ export default function Dashboard() {
   const { signOut, profile } = useAuth();
   const [products, setProducts] = useState<Product[]>([]);
   const [lists, setLists] = useState<List[]>([]);
-  const [selectedList, setSelectedList] = useState<string | null>(null);
   const [showAddProduct, setShowAddProduct] = useState(false);
   const [showLists, setShowLists] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
@@ -81,18 +80,12 @@ export default function Dashboard() {
   const getFilteredProducts = () => {
     let filtered = [...products];
 
-    if (selectedList) {
-      filtered = products.filter((p) => {
-        return true;
-      });
-    }
-
     switch (sortBy) {
       case 'price-low':
-        filtered.sort((a, b) => a.current_price - b.current_price);
+        filtered.sort((a, b) => (a.current_price ?? Infinity) - (b.current_price ?? Infinity));
         break;
       case 'price-high':
-        filtered.sort((a, b) => b.current_price - a.current_price);
+        filtered.sort((a, b) => (b.current_price ?? -Infinity) - (a.current_price ?? -Infinity));
         break;
       case 'sale':
         filtered = filtered.filter((p) => p.is_on_sale);

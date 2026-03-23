@@ -1,0 +1,70 @@
+Refactor the product URL import system to REMOVE all AI-based scraping and parsing.
+
+Do not use any AI, LLM, or token-based extraction in this feature.
+
+Implement a deterministic metadata-based extraction system as follows:
+
+1. When a user submits a product URL:
+   - Fetch the raw HTML of the page using a backend/server-side function
+   - Do NOT process the page using AI
+
+2. Extract product data using standard metadata:
+
+   Priority order:
+   a) JSON-LD structured data (application/ld+json)
+      - Look for "@type": "Product"
+      - Extract:
+        - name → title
+        - image
+        - offers.price → current_price
+        - offers.priceCurrency
+        - offers.highPrice or compare price if available
+
+   b) Open Graph tags:
+      - og:title → title
+      - og:image → image
+      - og:site_name → store_name
+
+   c) Fallback HTML parsing:
+      - <title> tag → title
+      - First large <img> → image
+
+3. Price handling:
+   - If both current_price and original_price exist:
+       → set is_on_sale = true
+   - Otherwise:
+       → is_on_sale = false
+
+4. Manual entry fallback:
+   - If metadata extraction fails, or the user prefers manual input:
+       - Show a form with all product fields
+       - **Only URL and product name are required**
+       - All other fields (image, price, store name, description, original price, etc.) are optional
+
+5. Return a structured Product object:
+   - title (required)
+   - current_price (optional)
+   - original_price (optional)
+   - is_on_sale (optional)
+   - image_url (optional)
+   - source_url (required)
+   - store_name (optional)
+   - description (optional)
+
+6. Update the UI flow:
+   - After URL submission, show a loading state while fetching metadata
+   - Then display the extracted product details for confirmation/editing
+   - Allow user to edit any field before saving
+
+7. Error handling:
+   - If extraction fails:
+       → show fallback form with only URL and product name required
+       → prefill URL if available
+
+8. Important constraints:
+   - Do NOT use AI for parsing at any step
+   - Do NOT call any LLM APIs
+   - This must be a one-time backend implementation, not a per-request token-based system
+
+Goal:
+Make the product import fast, reliable, zero-token cost, and user-friendly with minimal required fields.

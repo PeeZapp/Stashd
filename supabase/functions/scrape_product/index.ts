@@ -6,152 +6,256 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 };
 
-interface ScrapedProduct {
-  title: string;
-  price: number;
-  originalPrice: number | null;
-  image: string;
-  storeName: string;
-  sku: string | null;
-  description: string;
+interface ExtractedProduct {
+  title: string | null;
+  current_price: number | null;
+  original_price: number | null;
+  is_on_sale: boolean;
+  image_url: string | null;
+  source_url: string;
+  store_name: string | null;
+  description: string | null;
 }
 
-async function scrapeProduct(url: string): Promise<ScrapedProduct> {
-  const response = await fetch(url, {
-    headers: {
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-    },
-  });
+function parseJsonLd(html: string): ExtractedProduct | null {
+  const scriptPattern = /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  let match: RegExpExecArray | null;
 
-  if (!response.ok) {
-    throw new Error(`Failed to fetch URL: ${response.statusText}`);
-  }
+  while ((match = scriptPattern.exec(html)) !== null) {
+    try {
+      const raw = match[1].trim();
+      const data = JSON.parse(raw);
 
-  const html = await response.text();
+      const items: unknown[] = Array.isArray(data)
+        ? data
+        : data["@graph"]
+        ? data["@graph"]
+        : [data];
 
-  // Extract using open graph and schema.org metadata (most reliable)
-  const title = extractTitle(html);
-  const price = extractPrice(html);
-  const image = extractImage(html);
-  const storeName = extractStoreName(url);
-  const sku = extractSKU(html);
-  const description = extractDescription(html);
+      for (const item of items) {
+        if (
+          typeof item !== "object" ||
+          item === null ||
+          (item as Record<string, unknown>)["@type"] !== "Product"
+        ) {
+          continue;
+        }
 
-  return {
-    title,
-    price,
-    originalPrice: null,
-    image,
-    storeName,
-    sku,
-    description,
-  };
-}
+        const product = item as Record<string, unknown>;
 
-function extractTitle(html: string): string {
-  // Try og:title first
-  let match = html.match(/<meta\s+property="og:title"\s+content="([^"]+)"/i);
-  if (match) return match[1].trim();
+        const title =
+          typeof product["name"] === "string" ? product["name"] : null;
 
-  // Try schema.org Product name
-  match = html.match(/"name"\s*:\s*"([^"]+)"/i);
-  if (match) return match[1].trim();
+        const imageRaw = product["image"];
+        let image_url: string | null = null;
+        if (typeof imageRaw === "string") {
+          image_url = imageRaw;
+        } else if (
+          Array.isArray(imageRaw) &&
+          typeof imageRaw[0] === "string"
+        ) {
+          image_url = imageRaw[0];
+        } else if (
+          typeof imageRaw === "object" &&
+          imageRaw !== null &&
+          typeof (imageRaw as Record<string, unknown>)["url"] === "string"
+        ) {
+          image_url = (imageRaw as Record<string, unknown>)["url"] as string;
+        }
 
-  // Try title tag
-  match = html.match(/<title[^>]*>([^<]+)<\/title>/i);
-  if (match) return match[1].trim();
+        const description =
+          typeof product["description"] === "string"
+            ? product["description"]
+            : null;
 
-  return "Product";
-}
+        let current_price: number | null = null;
+        let original_price: number | null = null;
 
-function extractPrice(html: string): number {
-  // Try og:price
-  let match = html.match(/<meta\s+property="og:price:amount"\s+content="([^"]+)"/i);
-  if (match) return parseFloat(match[1]);
+        const offersRaw = product["offers"];
+        if (offersRaw) {
+          const offers = Array.isArray(offersRaw) ? offersRaw[0] : offersRaw;
+          if (typeof offers === "object" && offers !== null) {
+            const o = offers as Record<string, unknown>;
+            const priceVal = o["price"];
+            if (priceVal !== undefined && priceVal !== null) {
+              const parsed = parseFloat(String(priceVal));
+              if (!isNaN(parsed)) current_price = parsed;
+            }
+            const highPriceVal = o["highPrice"];
+            if (highPriceVal !== undefined && highPriceVal !== null) {
+              const parsed = parseFloat(String(highPriceVal));
+              if (!isNaN(parsed) && (current_price === null || parsed > current_price)) {
+                original_price = parsed;
+              }
+            }
+          }
+        }
 
-  // Try schema.org price
-  match = html.match(/"price"\s*:\s*"?([0-9.]+)"?/i);
-  if (match) return parseFloat(match[1]);
+        const is_on_sale =
+          current_price !== null &&
+          original_price !== null &&
+          original_price > current_price;
 
-  // Try common patterns
-  match = html.match(/\$\s*([0-9]+\.?[0-9]*)/);
-  if (match) return parseFloat(match[1]);
-
-  return 0;
-}
-
-function extractImage(html: string): string {
-  // Try og:image first
-  let match = html.match(/<meta\s+property="og:image"\s+content="([^"]+)"/i);
-  if (match) return match[1].trim();
-
-  // Try schema.org image
-  match = html.match(/"image"\s*:\s*"([^"]+)"/i);
-  if (match) return match[1].trim();
-
-  // Try product image patterns
-  match = html.match(/(?:product[_-]?image|main[_-]?image|featured[_-]?image).*?(?:src|href)="([^"]+)"/i);
-  if (match) return match[1].trim();
-
-  // Try any img src
-  match = html.match(/<img[^>]*src="([^"]+)"[^>]*>/i);
-  if (match) return match[1].trim();
-
-  return "";
-}
-
-function extractStoreName(url: string): string {
-  try {
-    const urlObj = new URL(url);
-    let hostname = urlObj.hostname.replace("www.", "");
-
-    // Format domain nicely
-    const parts = hostname.split(".");
-    if (parts.length > 1) {
-      hostname = parts[0].charAt(0).toUpperCase() + parts[0].slice(1);
+        if (title) {
+          return {
+            title,
+            current_price,
+            original_price,
+            is_on_sale,
+            image_url,
+            source_url: "",
+            store_name: null,
+            description,
+          };
+        }
+      }
+    } catch {
+      // malformed JSON-LD — continue to next script block
     }
-
-    return hostname;
-  } catch {
-    return "Unknown Store";
   }
+
+  return null;
 }
 
-function extractSKU(html: string): string | null {
-  // Try schema.org sku
-  let match = html.match(/"sku"\s*:\s*"([^"]+)"/i);
+function extractOgMeta(
+  html: string,
+  property: string
+): string | null {
+  const pattern = new RegExp(
+    `<meta[^>]+property=["']og:${property}["'][^>]+content=["']([^"']+)["']`,
+    "i"
+  );
+  let match = pattern.exec(html);
   if (match) return match[1].trim();
 
-  // Try common patterns
-  match = html.match(/(?:sku|product[_-]?id|item[_-]?number)["\']?\s*[:=]\s*["\']?([A-Z0-9\-]+)/i);
+  const pattern2 = new RegExp(
+    `<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:${property}["']`,
+    "i"
+  );
+  match = pattern2.exec(html);
   if (match) return match[1].trim();
 
   return null;
 }
 
-function extractDescription(html: string): string {
-  // Try og:description
-  let match = html.match(/<meta\s+property="og:description"\s+content="([^"]+)"/i);
+function extractMetaName(html: string, name: string): string | null {
+  const pattern = new RegExp(
+    `<meta[^>]+name=["']${name}["'][^>]+content=["']([^"']+)["']`,
+    "i"
+  );
+  let match = pattern.exec(html);
   if (match) return match[1].trim();
 
-  // Try meta description
-  match = html.match(/<meta\s+name="description"\s+content="([^"]+)"/i);
+  const pattern2 = new RegExp(
+    `<meta[^>]+content=["']([^"']+)["'][^>]+name=["']${name}["']`,
+    "i"
+  );
+  match = pattern2.exec(html);
   if (match) return match[1].trim();
 
-  // Try schema.org description
-  match = html.match(/"description"\s*:\s*"([^"]+)"/i);
-  if (match) return match[1].trim();
+  return null;
+}
 
-  return "";
+function extractFromOpenGraph(html: string): Partial<ExtractedProduct> {
+  const title = extractOgMeta(html, "title");
+  const image_url = extractOgMeta(html, "image");
+  const store_name = extractOgMeta(html, "site_name");
+  const description =
+    extractOgMeta(html, "description") ||
+    extractMetaName(html, "description");
+
+  const priceAmountRaw = extractOgMeta(html, "price:amount");
+  let current_price: number | null = null;
+  if (priceAmountRaw) {
+    const parsed = parseFloat(priceAmountRaw.replace(/[^0-9.]/g, ""));
+    if (!isNaN(parsed)) current_price = parsed;
+  }
+
+  return { title, image_url, store_name, description, current_price };
+}
+
+function extractFallback(html: string): Partial<ExtractedProduct> {
+  const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+  const title = titleMatch ? titleMatch[1].trim() : null;
+
+  const imgMatch = html.match(
+    /<img[^>]+(?:src|data-src)=["']([^"']+\.(?:jpg|jpeg|png|webp|gif)[^"']*)["'][^>]*>/i
+  );
+  const image_url = imgMatch ? imgMatch[1].trim() : null;
+
+  return { title, image_url };
+}
+
+function storeNameFromUrl(url: string): string | null {
+  try {
+    const hostname = new URL(url).hostname.replace(/^www\./, "");
+    const parts = hostname.split(".");
+    const name = parts[0];
+    return name.charAt(0).toUpperCase() + name.slice(1);
+  } catch {
+    return null;
+  }
+}
+
+async function extractProductMetadata(url: string): Promise<ExtractedProduct> {
+  const response = await fetch(url, {
+    headers: {
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      Accept:
+        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+      "Accept-Language": "en-US,en;q=0.5",
+    },
+    redirect: "follow",
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch URL: ${response.status} ${response.statusText}`);
+  }
+
+  const html = await response.text();
+
+  // Priority 1: JSON-LD structured data
+  const jsonLdData = parseJsonLd(html);
+
+  // Priority 2: Open Graph
+  const ogData = extractFromOpenGraph(html);
+
+  // Priority 3: Fallback HTML
+  const fallback = extractFallback(html);
+
+  // Merge with priority order
+  const title = jsonLdData?.title ?? ogData.title ?? fallback.title ?? null;
+  const image_url =
+    jsonLdData?.image_url ?? ogData.image_url ?? fallback.image_url ?? null;
+  const description =
+    jsonLdData?.description ?? ogData.description ?? null;
+  const store_name =
+    ogData.store_name ?? storeNameFromUrl(url);
+
+  const current_price =
+    jsonLdData?.current_price ?? ogData.current_price ?? null;
+  const original_price = jsonLdData?.original_price ?? null;
+  const is_on_sale =
+    current_price !== null &&
+    original_price !== null &&
+    original_price > current_price;
+
+  return {
+    title,
+    current_price,
+    original_price,
+    is_on_sale,
+    image_url,
+    source_url: url,
+    store_name,
+    description,
+  };
 }
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
-    return new Response(null, {
-      status: 200,
-      headers: corsHeaders,
-    });
+    return new Response(null, { status: 200, headers: corsHeaders });
   }
 
   try {
@@ -160,48 +264,32 @@ Deno.serve(async (req: Request) => {
     if (!url) {
       return new Response(
         JSON.stringify({ error: "URL is required" }),
-        {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    // Validate URL
     try {
       new URL(url);
     } catch {
       return new Response(
         JSON.stringify({ error: "Invalid URL" }),
-        {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    const product = await scrapeProduct(url);
+    const product = await extractProductMetadata(url);
 
     return new Response(
-      JSON.stringify({
-        success: true,
-        data: product,
-      }),
-      {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
+      JSON.stringify({ success: true, data: product }),
+      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {
-    console.error("Scraping error:", error);
+    console.error("Extraction error:", error);
     return new Response(
       JSON.stringify({
-        error: error instanceof Error ? error.message : "Failed to scrape product",
+        error: error instanceof Error ? error.message : "Failed to extract product data",
       }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
 });

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, ExternalLink, Share2, Trash2, Plus, Check } from 'lucide-react';
+import { X, ExternalLink, Share2, Trash2, Check, ShoppingBag } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import type { Product, List } from '../lib/types';
 
@@ -54,19 +54,16 @@ export default function ProductDetailModal({
         console.error('Error removing from list:', error);
         return;
       }
-
       setProductLists((prev) => prev.filter((id) => id !== listId));
     } else {
-      const { error } = await supabase.from('list_products').insert({
-        list_id: listId,
-        product_id: product.id,
-      });
+      const { error } = await supabase
+        .from('list_products')
+        .insert({ list_id: listId, product_id: product.id });
 
       if (error) {
         console.error('Error adding to list:', error);
         return;
       }
-
       setProductLists((prev) => [...prev, listId]);
     }
 
@@ -80,9 +77,13 @@ export default function ProductDetailModal({
   };
 
   const discount =
-    product.original_price && product.is_on_sale
-      ? Math.round(((product.original_price - product.current_price) / product.original_price) * 100)
+    product.original_price && product.current_price && product.is_on_sale
+      ? Math.round(
+          ((product.original_price - product.current_price) / product.original_price) * 100
+        )
       : 0;
+
+  const storeName = product.store_name ?? 'Store';
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto">
@@ -96,11 +97,25 @@ export default function ProductDetailModal({
 
         <div className="grid md:grid-cols-2 gap-8">
           <div className="relative">
-            <img
-              src={product.image_url}
-              alt={product.title}
-              className="w-full aspect-square object-cover rounded-xl"
-            />
+            {product.image_url ? (
+              <img
+                src={product.image_url}
+                alt={product.title}
+                className="w-full aspect-square object-cover rounded-xl"
+                onError={(e) => {
+                  const t = e.currentTarget;
+                  t.style.display = 'none';
+                  const sibling = t.nextElementSibling as HTMLElement | null;
+                  if (sibling) sibling.style.display = 'flex';
+                }}
+              />
+            ) : null}
+            <div
+              className="w-full aspect-square rounded-xl bg-gray-100 items-center justify-center"
+              style={{ display: product.image_url ? 'none' : 'flex' }}
+            >
+              <ShoppingBag className="w-20 h-20 text-gray-300" />
+            </div>
             {product.is_on_sale && discount > 0 && (
               <div className="absolute top-4 right-4 bg-red-600 text-white px-4 py-2 rounded-full text-lg font-semibold">
                 -{discount}%
@@ -110,9 +125,11 @@ export default function ProductDetailModal({
 
           <div className="flex flex-col">
             <div className="mb-4">
-              <p className="text-sm text-gray-500 uppercase tracking-wide mb-2">
-                {product.store_name}
-              </p>
+              {product.store_name && (
+                <p className="text-sm text-gray-500 uppercase tracking-wide mb-2">
+                  {product.store_name}
+                </p>
+              )}
               <h2 className="text-2xl font-bold text-gray-900 mb-4">{product.title}</h2>
 
               {product.description && (
@@ -120,21 +137,27 @@ export default function ProductDetailModal({
               )}
 
               <div className="flex items-baseline space-x-3 mb-6">
-                <span className="text-3xl font-bold text-gray-900">
-                  ${product.current_price.toFixed(2)}
-                </span>
-                {product.is_on_sale && product.original_price && (
-                  <span className="text-xl text-gray-500 line-through">
-                    ${product.original_price.toFixed(2)}
-                  </span>
+                {product.current_price != null ? (
+                  <>
+                    <span className="text-3xl font-bold text-gray-900">
+                      ${product.current_price.toFixed(2)}
+                    </span>
+                    {product.is_on_sale && product.original_price && (
+                      <span className="text-xl text-gray-500 line-through">
+                        ${product.original_price.toFixed(2)}
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <span className="text-gray-400 italic text-lg">No price set</span>
                 )}
               </div>
 
-              {product.is_on_sale && product.original_price && (
+              {product.is_on_sale && product.original_price && product.current_price && (
                 <div className="mb-6 p-3 bg-green-50 border border-green-200 rounded-lg">
                   <p className="text-sm text-green-800 font-medium">
-                    You save ${(product.original_price - product.current_price).toFixed(2)} ({discount}
-                    % off)
+                    You save ${(product.original_price - product.current_price).toFixed(2)} (
+                    {discount}% off)
                   </p>
                 </div>
               )}
@@ -173,7 +196,7 @@ export default function ProductDetailModal({
                 rel="noopener noreferrer"
                 className="w-full px-4 py-3 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors flex items-center justify-center space-x-2 font-medium"
               >
-                <span>View on {product.store_name}</span>
+                <span>View on {storeName}</span>
                 <ExternalLink className="w-5 h-5" />
               </a>
 

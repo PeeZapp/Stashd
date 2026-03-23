@@ -52,9 +52,9 @@ export default function SharedListView({ shareToken }: SharedListViewProps) {
     }
   };
 
-  const totalCost = products.reduce((sum, p) => sum + p.current_price, 0);
+  const totalCost = products.reduce((sum, p) => sum + (p.current_price ?? 0), 0);
   const totalSavings = products.reduce((sum, p) => {
-    if (p.is_on_sale && p.original_price) {
+    if (p.is_on_sale && p.original_price && p.current_price != null) {
       return sum + (p.original_price - p.current_price);
     }
     return sum;
@@ -95,10 +95,7 @@ export default function SharedListView({ shareToken }: SharedListViewProps) {
             <ShoppingBag className="w-7 h-7 text-gray-900" strokeWidth={1.5} />
             <span className="text-xl font-semibold text-gray-900">Stashd</span>
           </div>
-          <a
-            href="/"
-            className="px-4 py-2 text-gray-700 hover:text-gray-900 transition-colors"
-          >
+          <a href="/" className="px-4 py-2 text-gray-700 hover:text-gray-900 transition-colors">
             Create Your Own
           </a>
         </div>
@@ -111,8 +108,12 @@ export default function SharedListView({ shareToken }: SharedListViewProps) {
             <p>
               {products.length} item{products.length !== 1 ? 's' : ''}
             </p>
-            <span>·</span>
-            <p className="text-2xl font-bold text-gray-900">${totalCost.toFixed(2)} total</p>
+            {totalCost > 0 && (
+              <>
+                <span>·</span>
+                <p className="text-2xl font-bold text-gray-900">${totalCost.toFixed(2)} total</p>
+              </>
+            )}
             {totalSavings > 0 && (
               <>
                 <span>·</span>
@@ -131,9 +132,10 @@ export default function SharedListView({ shareToken }: SharedListViewProps) {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
             {products.map((product) => {
               const discount =
-                product.original_price && product.is_on_sale
+                product.original_price && product.current_price && product.is_on_sale
                   ? Math.round(
-                      ((product.original_price - product.current_price) / product.original_price) *
+                      ((product.original_price - product.current_price) /
+                        product.original_price) *
                         100
                     )
                   : 0;
@@ -144,11 +146,18 @@ export default function SharedListView({ shareToken }: SharedListViewProps) {
                   className="bg-white rounded-xl overflow-hidden border border-gray-200 hover:shadow-lg transition-shadow"
                 >
                   <div className="relative aspect-square bg-gray-100">
-                    <img
-                      src={product.image_url}
-                      alt={product.title}
-                      className="w-full h-full object-cover"
-                    />
+                    {product.image_url ? (
+                      <img
+                        src={product.image_url}
+                        alt={product.title}
+                        className="w-full h-full object-cover"
+                        onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center">
+                        <ShoppingBag className="w-12 h-12 text-gray-300" />
+                      </div>
+                    )}
                     {product.is_on_sale && discount > 0 && (
                       <div className="absolute top-3 right-3 bg-red-600 text-white px-3 py-1 rounded-full text-sm font-semibold">
                         -{discount}%
@@ -157,21 +166,29 @@ export default function SharedListView({ shareToken }: SharedListViewProps) {
                   </div>
 
                   <div className="p-4">
-                    <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">
-                      {product.store_name}
-                    </p>
+                    {product.store_name && (
+                      <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">
+                        {product.store_name}
+                      </p>
+                    )}
                     <h3 className="text-base font-semibold text-gray-900 line-clamp-2 mb-2">
                       {product.title}
                     </h3>
 
                     <div className="flex items-baseline space-x-2 mb-3">
-                      <span className="text-xl font-bold text-gray-900">
-                        ${product.current_price.toFixed(2)}
-                      </span>
-                      {product.is_on_sale && product.original_price && (
-                        <span className="text-sm text-gray-500 line-through">
-                          ${product.original_price.toFixed(2)}
-                        </span>
+                      {product.current_price != null ? (
+                        <>
+                          <span className="text-xl font-bold text-gray-900">
+                            ${product.current_price.toFixed(2)}
+                          </span>
+                          {product.is_on_sale && product.original_price && (
+                            <span className="text-sm text-gray-500 line-through">
+                              ${product.original_price.toFixed(2)}
+                            </span>
+                          )}
+                        </>
+                      ) : (
+                        <span className="text-sm text-gray-400 italic">No price</span>
                       )}
                     </div>
 

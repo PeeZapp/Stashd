@@ -68,9 +68,13 @@ export default function SharedProductView({ productId }: SharedProductViewProps)
   }
 
   const discount =
-    product.original_price && product.is_on_sale
-      ? Math.round(((product.original_price - product.current_price) / product.original_price) * 100)
+    product.original_price && product.current_price && product.is_on_sale
+      ? Math.round(
+          ((product.original_price - product.current_price) / product.original_price) * 100
+        )
       : 0;
+
+  const storeName = product.store_name ?? 'Store';
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -80,10 +84,7 @@ export default function SharedProductView({ productId }: SharedProductViewProps)
             <ShoppingBag className="w-7 h-7 text-gray-900" strokeWidth={1.5} />
             <span className="text-xl font-semibold text-gray-900">Stashd</span>
           </div>
-          <a
-            href="/"
-            className="px-4 py-2 text-gray-700 hover:text-gray-900 transition-colors"
-          >
+          <a href="/" className="px-4 py-2 text-gray-700 hover:text-gray-900 transition-colors">
             Create Your Own
           </a>
         </div>
@@ -93,11 +94,25 @@ export default function SharedProductView({ productId }: SharedProductViewProps)
         <div className="bg-white rounded-2xl overflow-hidden border border-gray-200">
           <div className="grid md:grid-cols-2 gap-8 p-8">
             <div className="relative">
-              <img
-                src={product.image_url}
-                alt={product.title}
-                className="w-full aspect-square object-cover rounded-xl"
-              />
+              {product.image_url ? (
+                <img
+                  src={product.image_url}
+                  alt={product.title}
+                  className="w-full aspect-square object-cover rounded-xl"
+                  onError={(e) => {
+                    const t = e.currentTarget;
+                    t.style.display = 'none';
+                    const sibling = t.nextElementSibling as HTMLElement | null;
+                    if (sibling) sibling.style.display = 'flex';
+                  }}
+                />
+              ) : null}
+              <div
+                className="w-full aspect-square rounded-xl bg-gray-100 items-center justify-center"
+                style={{ display: product.image_url ? 'none' : 'flex' }}
+              >
+                <ShoppingBag className="w-20 h-20 text-gray-300" />
+              </div>
               {product.is_on_sale && discount > 0 && (
                 <div className="absolute top-4 right-4 bg-red-600 text-white px-4 py-2 rounded-full text-lg font-semibold">
                   -{discount}%
@@ -107,9 +122,11 @@ export default function SharedProductView({ productId }: SharedProductViewProps)
 
             <div className="flex flex-col">
               <div className="mb-6">
-                <p className="text-sm text-gray-500 uppercase tracking-wide mb-2">
-                  {product.store_name}
-                </p>
+                {product.store_name && (
+                  <p className="text-sm text-gray-500 uppercase tracking-wide mb-2">
+                    {product.store_name}
+                  </p>
+                )}
                 <h1 className="text-3xl font-bold text-gray-900 mb-4">{product.title}</h1>
 
                 {product.description && (
@@ -117,17 +134,23 @@ export default function SharedProductView({ productId }: SharedProductViewProps)
                 )}
 
                 <div className="flex items-baseline space-x-3 mb-6">
-                  <span className="text-4xl font-bold text-gray-900">
-                    ${product.current_price.toFixed(2)}
-                  </span>
-                  {product.is_on_sale && product.original_price && (
-                    <span className="text-2xl text-gray-500 line-through">
-                      ${product.original_price.toFixed(2)}
-                    </span>
+                  {product.current_price != null ? (
+                    <>
+                      <span className="text-4xl font-bold text-gray-900">
+                        ${product.current_price.toFixed(2)}
+                      </span>
+                      {product.is_on_sale && product.original_price && (
+                        <span className="text-2xl text-gray-500 line-through">
+                          ${product.original_price.toFixed(2)}
+                        </span>
+                      )}
+                    </>
+                  ) : (
+                    <span className="text-gray-400 italic text-lg">No price set</span>
                   )}
                 </div>
 
-                {product.is_on_sale && product.original_price && (
+                {product.is_on_sale && product.original_price && product.current_price != null && (
                   <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg">
                     <p className="text-green-800 font-semibold">
                       Save ${(product.original_price - product.current_price).toFixed(2)} ({discount}% off)
@@ -143,7 +166,7 @@ export default function SharedProductView({ productId }: SharedProductViewProps)
                   rel="noopener noreferrer"
                   className="w-full px-6 py-4 bg-gray-900 text-white text-lg font-medium rounded-lg hover:bg-gray-800 transition-colors flex items-center justify-center space-x-2"
                 >
-                  <span>Buy on {product.store_name}</span>
+                  <span>Buy on {storeName}</span>
                   <ExternalLink className="w-5 h-5" />
                 </a>
               </div>
