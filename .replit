@@ -1,5 +1,47 @@
+modules = ["python-3.11", "nodejs-20"]
 [agent]
 expertMode = true
+integrations = ["github:1.0.0"]
 
 [nix]
 channel = "stable-25_05"
+packages = ["unzip"]
+
+[userenv]
+
+[userenv.shared]
+VITE_SUPABASE_URL = "https://iscfnmfhirwjlurepsru.supabase.co"
+VITE_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlzY2ZubWZoaXJ3amx1cmVwc3J1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyMDM0MTksImV4cCI6MjA4OTc3OTQxOX0.Ui5BEuvkC9yxYOs6KNV79OL_hCOabQN1YYPjwYMwTvI"
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Start application"
+
+[[workflows.workflow]]
+name = "Start application"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "npm run dev"
+waitForPort = 5000
+
+[workflows.workflow.metadata]
+outputType = "webview"
+
+[[ports]]
+localPort = 5000
+externalPort = 80
+
+[deployment]
+deploymentTarget = "static"
+build = ["npm", "run", "build"]
+publicDir = "dist"
