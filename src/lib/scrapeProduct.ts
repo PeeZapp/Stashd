@@ -28,6 +28,8 @@ export function parsePrice(raw: string | number | null | undefined): number | nu
   return isNaN(num) || num <= 0 ? null : num;
 }
 
+// ── HTML tag extraction helpers ─────────────────────────────
+
 function extractOgTag(html: string, property: string): string | null {
   const patterns = [
     new RegExp(`<meta[^>]+property=["'][^"']*og:${property}["'][^>]+content=["']([^"']+)["']`, 'i'),
@@ -66,6 +68,8 @@ function extractItemprop(html: string, prop: string): string | null {
   return null;
 }
 
+// ── JSON-LD structured data ────────────────────────────────
+
 interface LdResult {
   title?: string;
   price?: number;
@@ -97,18 +101,16 @@ function parseJsonLd(html: string): LdResult | null {
         if (!typeStr.toLowerCase().includes('product')) continue;
 
         const result: LdResult = {};
-
         if (typeof obj.name === 'string') result.title = obj.name;
         if (typeof obj.description === 'string') result.description = obj.description;
 
         // Image
         const img = obj.image;
         if (typeof img === 'string') result.image = img;
-        else if (Array.isArray(img) && img.length > 0) {
+        else if (Array.isArray(img) && img.length > 0)
           result.image = typeof img[0] === 'string' ? img[0] : (img[0] as Record<string, string>).url;
-        } else if (img && typeof img === 'object') {
+        else if (img && typeof img === 'object')
           result.image = (img as Record<string, string>).url;
-        }
 
         // Offers
         const offersRaw = obj.offers;
@@ -126,11 +128,116 @@ function parseJsonLd(html: string): LdResult | null {
 
         if (result.title || result.price !== undefined) return result;
       }
+    } catch { /* malformed JSON-LD */ }
+  }
+  return null;
+}
+
+// ── Embedded JS price extraction ────────────────────────────
+// Many ecommerce sites bake product data into window variables or inline JSON
+// even when they later render prices via JavaScript.
+
+function extractPriceFromScripts(html: string): { price: number | null; originalPrice: number | null } {
+  // Pull all <script> content (excluding JSON-LD which we handle separately)
+  const scriptBlocks: string[] = [];
+  const scriptPattern = /<script(?!\s[^>]*type=["']application\/ld\+json["'])[^>]*>([\s\S]*?)<\/script>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = scriptPattern.exec(html)) !== null) {
+    if (m[1] && m[1].trim().length > 10) scriptBlocks.push(m[1]);
+  }
+  const scriptContent = scriptBlocks.join('\n');
+
+  // Patterns to try, in priority order.
+  // Each pattern returns a price in dollars (some stores use cents, handled below).
+  const DOLLAR_PATTERNS: RegExp[] = [
+    // JSON-like: "price": 49.99  /  "price":"49.99"  /  "price": "49.99"
+    /"(?:current_price|salePrice|finalPrice|discountedPrice|price_numeric|priceValue|sellingPrice|selling_price)"\s*:\s*"?\$?(\d{1,4}(?:\.\d{1,2})?)"?/i,
+    // Standard price key — avoid matching version strings (price > 0.99)
+    /"price"\s*:\s*"?\$?(\d{1,4}\.\d{2})"?/,
+    // price_amount / amount / displayPrice
+    /"(?:price_amount|amount|displayPrice|formatted_price|priceFormatted)"\s*:\s*"?\$?(\d{1,4}(?:\.\d{1,2})?)"?/i,
+    // JavaScript assignment: price = 49.99; / var price = 49.99
+    /(?:var|let|const)\s+price\s*=\s*(\d{1,4}\.\d{2})/,
+    // Shopify: "price":4999 (cents) — we detect if > 99 and integer, divide by 100
+    /"price"\s*:\s*(\d{3,6})(?!\.\d)/,
+  ];
+
+  const ORIGINAL_PRICE_PATTERNS: RegExp[] = [
+    /"(?:compareAtPrice|compare_at_price|originalPrice|original_price|regularPrice|regular_price|wasPrice|was_price|listPrice|list_price|rrp|retailPrice|retail_price)"\s*:\s*"?\$?(\d{1,4}(?:\.\d{1,2})?)"?/i,
+    /"compareAtPrice"\s*:\s*(\d{3,6})(?!\.\d)/,
+  ];
+
+  let price: number | null = null;
+  let originalPrice: number | null = null;
+
+  for (const pattern of DOLLAR_PATTERNS) {
+    const match = pattern.exec(scriptContent);
+    if (match) {
+      let val = parseFloat(match[1]);
+      if (!isNaN(val) && val > 0) {
+        // Shopify-style cents: integer > 99, assume cents
+        if (Number.isInteger(val) && val > 99 && !match[0].includes('.')) {
+          val = val / 100;
+        }
+        if (val > 0 && val < 100000) {
+          price = val;
+          break;
+        }
+      }
+    }
+  }
+
+  for (const pattern of ORIGINAL_PRICE_PATTERNS) {
+    const match = pattern.exec(scriptContent);
+    if (match) {
+      let val = parseFloat(match[1]);
+      if (!isNaN(val) && val > 0) {
+        if (Number.isInteger(val) && val > 99 && !match[0].includes('.')) {
+          val = val / 100;
+        }
+        if (val > 0 && val < 100000) {
+          originalPrice = val;
+          break;
+        }
+      }
+    }
+  }
+
+  return { price, originalPrice };
+}
+
+// ── Network helpers ─────────────────────────────────────────
+
+async function fetchHtml(url: string): Promise<string | null> {
+  const proxies = [
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+    `https://corsproxy.io/?${encodeURIComponent(url)}`,
+  ];
+
+  for (const proxyUrl of proxies) {
+    try {
+      const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(12000) });
+      if (!res.ok) continue;
+      const text = await res.text();
+      if (text && text.length > 500) return text;
     } catch {
-      // malformed JSON-LD — skip
+      // try next proxy
     }
   }
   return null;
+}
+
+async function fetchMicrolink(url: string): Promise<Record<string, unknown>> {
+  try {
+    const res = await fetch(
+      `https://api.microlink.io?url=${encodeURIComponent(url)}&screenshot=false`,
+      { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(10000) }
+    );
+    const json = await res.json();
+    return json.status === 'success' ? (json.data ?? {}) : {};
+  } catch {
+    return {};
+  }
 }
 
 function storeFromUrl(url: string): string | null {
@@ -143,37 +250,10 @@ function storeFromUrl(url: string): string | null {
   }
 }
 
-async function fetchHtml(url: string): Promise<string | null> {
-  try {
-    const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
-    const res = await fetch(proxyUrl, {
-      signal: AbortSignal.timeout(12000),
-    });
-    if (!res.ok) return null;
-    return await res.text();
-  } catch {
-    return null;
-  }
-}
-
-async function fetchMicrolink(url: string): Promise<Record<string, unknown>> {
-  try {
-    const res = await fetch(
-      `https://api.microlink.io?url=${encodeURIComponent(url)}&screenshot=false`,
-      {
-        headers: { Accept: 'application/json' },
-        signal: AbortSignal.timeout(10000),
-      }
-    );
-    const json = await res.json();
-    return json.status === 'success' ? (json.data ?? {}) : {};
-  } catch {
-    return {};
-  }
-}
+// ── Main export ─────────────────────────────────────────────
 
 export async function scrapeProduct(url: string): Promise<ScrapedProduct> {
-  // Run HTML fetch and microlink lookup in parallel for speed
+  // Fetch HTML and microlink data in parallel
   const [html, ml] = await Promise.all([fetchHtml(url), fetchMicrolink(url)]);
 
   let title: string | null = null;
@@ -185,33 +265,26 @@ export async function scrapeProduct(url: string): Promise<ScrapedProduct> {
   let availabilityHints = '';
 
   if (html) {
-    // 1) JSON-LD structured data — highest fidelity
+    // 1) JSON-LD — highest fidelity when available
     const ld = parseJsonLd(html);
     if (ld) {
       if (ld.title) title = ld.title;
       if (ld.image) image_url = ld.image;
       if (ld.description) description = ld.description;
       if (ld.price !== undefined && ld.price > 0) current_price = ld.price;
-      if (
-        ld.highPrice !== undefined &&
-        ld.highPrice > 0 &&
-        ld.highPrice > (current_price ?? 0)
-      ) {
+      if (ld.highPrice !== undefined && ld.highPrice > 0 && ld.highPrice > (current_price ?? 0))
         original_price = ld.highPrice;
-      }
-      // lowPrice means the price range starts at — treat current as lowPrice if we got both
       if (ld.lowPrice !== undefined && ld.price === undefined) current_price = ld.lowPrice;
       if (ld.availability) availabilityHints += ' ' + ld.availability;
     }
 
-    // 2) Open Graph tags
+    // 2) Open Graph
     title = title ?? extractOgTag(html, 'title');
     image_url = image_url ?? extractOgTag(html, 'image') ?? extractOgTag(html, 'image:secure_url');
-    description = description ?? extractOgTag(html, 'description');
+    description = description ?? extractOgTag(html, 'description') ?? extractMetaTag(html, 'description');
     store_name = extractOgTag(html, 'site_name');
 
     if (!current_price) {
-      // og:price:amount, product:price:amount, og:product:price:amount
       current_price =
         parsePrice(extractOgTag(html, 'price:amount')) ??
         parsePrice(extractMetaTag(html, 'product:price:amount')) ??
@@ -219,21 +292,24 @@ export async function scrapeProduct(url: string): Promise<ScrapedProduct> {
     }
 
     // 3) Microdata itemprop
+    if (!current_price) current_price = parsePrice(extractItemprop(html, 'price'));
+    if (!image_url) image_url = extractItemprop(html, 'image');
+
+    // 4) Embedded JavaScript data (Shopify, custom stores, etc.)
     if (!current_price) {
-      current_price = parsePrice(extractItemprop(html, 'price'));
-    }
-    if (!image_url) {
-      image_url = extractItemprop(html, 'image');
+      const jsResult = extractPriceFromScripts(html);
+      if (jsResult.price !== null) current_price = jsResult.price;
+      if (jsResult.originalPrice !== null && original_price === null) original_price = jsResult.originalPrice;
     }
 
-    // 4) Availability signals
+    // 5) Availability hints
     const ogAvail = extractOgTag(html, 'availability') ?? extractMetaTag(html, 'availability');
     if (ogAvail) availabilityHints += ' ' + ogAvail;
 
-    // 5) HTML title fallback
+    // 6) HTML <title> fallback
     if (!title) {
-      const m = html.match(/<title[^>]*>([^<]+)<\/title>/i);
-      if (m) title = m[1].trim();
+      const tm = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+      if (tm) title = tm[1].trim();
     }
   }
 
@@ -242,10 +318,7 @@ export async function scrapeProduct(url: string): Promise<ScrapedProduct> {
   image_url = image_url ?? (ml.image as { url: string } | null)?.url ?? (ml.logo as { url: string } | null)?.url ?? null;
   description = description ?? (ml.description as string) ?? null;
   store_name = store_name ?? (ml.publisher as string) ?? storeFromUrl(url);
-
-  if (!current_price && ml.price) {
-    current_price = parsePrice(ml.price as string);
-  }
+  if (!current_price && ml.price) current_price = parsePrice(ml.price as string);
 
   // ── Stock detection ──
   const combinedText = [title, description, availabilityHints].filter(Boolean).join(' ');
@@ -257,14 +330,9 @@ export async function scrapeProduct(url: string): Promise<ScrapedProduct> {
   const is_on_sale =
     current_price !== null && original_price !== null && original_price > current_price;
 
-  return {
-    title,
-    current_price,
-    original_price,
-    is_on_sale,
-    is_out_of_stock,
-    image_url,
-    store_name,
-    description,
-  };
+  // Round prices to 2dp
+  if (current_price !== null) current_price = Math.round(current_price * 100) / 100;
+  if (original_price !== null) original_price = Math.round(original_price * 100) / 100;
+
+  return { title, current_price, original_price, is_on_sale, is_out_of_stock, image_url, store_name, description };
 }
