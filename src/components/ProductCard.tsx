@@ -1,4 +1,4 @@
-import { ExternalLink, Trash2, ShoppingBag } from 'lucide-react';
+import { ExternalLink, Trash2, ShoppingBag, PackageX } from 'lucide-react';
 import type { Product } from '../lib/types';
 
 interface ProductCardProps {
@@ -16,20 +16,18 @@ export default function ProductCard({ product, onClick, onDelete }: ProductCardP
       : 0;
 
   return (
-    <div className="bg-white rounded-xl overflow-hidden border border-gray-200 hover:shadow-lg transition-shadow group">
+    <div className={`bg-white rounded-xl overflow-hidden border transition-shadow group ${product.is_out_of_stock ? 'border-gray-300 opacity-75' : 'border-gray-200 hover:shadow-lg'}`}>
       <div className="relative aspect-square bg-gray-100 cursor-pointer" onClick={onClick}>
         {product.image_url ? (
           <img
             src={product.image_url}
             alt={product.title}
-            className="w-full h-full object-cover"
+            className={`w-full h-full object-cover ${product.is_out_of_stock ? 'grayscale' : ''}`}
             onError={(e) => {
               const target = e.currentTarget;
               target.style.display = 'none';
               const parent = target.parentElement;
-              if (parent) {
-                parent.classList.add('flex', 'items-center', 'justify-center');
-              }
+              if (parent) parent.classList.add('flex', 'items-center', 'justify-center');
             }}
           />
         ) : (
@@ -37,7 +35,19 @@ export default function ProductCard({ product, onClick, onDelete }: ProductCardP
             <ShoppingBag className="w-12 h-12 text-gray-300" />
           </div>
         )}
-        {product.is_on_sale && discount > 0 && (
+
+        {/* Out of stock overlay */}
+        {product.is_out_of_stock && (
+          <div className="absolute inset-0 flex items-end">
+            <div className="w-full bg-gray-900 bg-opacity-80 text-white text-center py-2 flex items-center justify-center space-x-1.5">
+              <PackageX className="w-4 h-4" />
+              <span className="text-sm font-semibold tracking-wide">Out of Stock</span>
+            </div>
+          </div>
+        )}
+
+        {/* Sale badge */}
+        {!product.is_out_of_stock && product.is_on_sale && discount > 0 && (
           <div className="absolute top-3 right-3 bg-red-600 text-white px-3 py-1 rounded-full text-sm font-semibold">
             -{discount}%
           </div>
@@ -62,7 +72,7 @@ export default function ProductCard({ product, onClick, onDelete }: ProductCardP
         <div className="flex items-baseline space-x-2 mb-3">
           {product.current_price != null ? (
             <>
-              <span className="text-xl font-bold text-gray-900">
+              <span className={`text-xl font-bold ${product.is_out_of_stock ? 'text-gray-400' : 'text-gray-900'}`}>
                 ${product.current_price.toFixed(2)}
               </span>
               {product.is_on_sale && product.original_price && (

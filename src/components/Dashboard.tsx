@@ -7,6 +7,7 @@ import ProductCard from './ProductCard';
 import AddProductModal from './AddProductModal';
 import ProductDetailModal from './ProductDetailModal';
 import ListCard, { type ListWithProducts } from './ListCard';
+import NotificationsPanel from './NotificationsPanel';
 
 type View = { type: 'lists' } | { type: 'list-detail'; listId: string };
 
@@ -152,6 +153,7 @@ export default function Dashboard() {
               <Plus className="w-5 h-5" />
               <span className="hidden sm:inline">Add Product</span>
             </button>
+            {user && <NotificationsPanel userId={user.id} />}
             <button
               onClick={signOut}
               className="p-2 text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"

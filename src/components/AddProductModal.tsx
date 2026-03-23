@@ -20,6 +20,7 @@ interface FormData {
   imageUrl: string;
   storeName: string;
   description: string;
+  isOutOfStock: boolean;
 }
 
 const emptyForm = (sourceUrl = ''): FormData => ({
@@ -30,6 +31,7 @@ const emptyForm = (sourceUrl = ''): FormData => ({
   imageUrl: '',
   storeName: '',
   description: '',
+  isOutOfStock: false,
 });
 
 export default function AddProductModal({ lists, onClose, onSuccess }: AddProductModalProps) {
@@ -93,6 +95,11 @@ export default function AddProductModal({ lists, onClose, onSuccess }: AddProduc
         if (!isNaN(num)) currentPrice = String(num);
       }
 
+      // Detect out-of-stock from title + description
+      const combinedText = [d.title, d.description].filter(Boolean).join(' ').toLowerCase();
+      const outOfStockKeywords = ['out of stock', 'out-of-stock', 'sold out', 'sold-out', 'unavailable', 'not available', 'currently unavailable'];
+      const detectedOutOfStock = outOfStockKeywords.some((kw) => combinedText.includes(kw));
+
       setFormData({
         sourceUrl: url,
         title: d.title ?? '',
@@ -101,6 +108,7 @@ export default function AddProductModal({ lists, onClose, onSuccess }: AddProduc
         imageUrl: d.image?.url ?? d.logo?.url ?? '',
         storeName: d.publisher ?? storeFromHost,
         description: d.description ?? '',
+        isOutOfStock: detectedOutOfStock,
       });
       setStep('details');
     } catch (err) {
@@ -147,6 +155,7 @@ export default function AddProductModal({ lists, onClose, onSuccess }: AddProduc
           current_price: currentPrice,
           original_price: originalPrice,
           is_on_sale: isOnSale,
+          is_out_of_stock: formData.isOutOfStock,
           image_url: formData.imageUrl.trim() || null,
           store_name: formData.storeName.trim() || null,
           description: formData.description.trim() || null,

@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
-import { X, ExternalLink, Share2, Trash2, Check, ShoppingBag } from 'lucide-react';
+import { X, ExternalLink, Share2, Trash2, Check, ShoppingBag, RefreshCw, PackageX } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { refreshProduct } from '../lib/refreshProduct';
+import { useAuth } from '../contexts/AuthContext';
 import type { Product, List } from '../lib/types';
 
 interface ProductDetailModalProps {
@@ -18,8 +20,11 @@ export default function ProductDetailModal({
   onUpdate,
   onDelete,
 }: ProductDetailModalProps) {
+  const { user } = useAuth();
   const [productLists, setProductLists] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshMsg, setRefreshMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   useEffect(() => {
     loadProductLists();
@@ -31,11 +36,7 @@ export default function ProductDetailModal({
       .select('list_id')
       .eq('product_id', product.id);
 
-    if (error) {
-      console.error('Error loading product lists:', error);
-      return;
-    }
-
+    if (error) { console.error(error); return; }
     setProductLists(data?.map((lp) => lp.list_id) || []);
     setLoading(false);
   };
@@ -49,24 +50,15 @@ export default function ProductDetailModal({
         .delete()
         .eq('list_id', listId)
         .eq('product_id', product.id);
-
-      if (error) {
-        console.error('Error removing from list:', error);
-        return;
-      }
+      if (error) { console.error(error); return; }
       setProductLists((prev) => prev.filter((id) => id !== listId));
     } else {
       const { error } = await supabase
         .from('list_products')
         .insert({ list_id: listId, product_id: product.id });
-
-      if (error) {
-        console.error('Error adding to list:', error);
-        return;
-      }
+      if (error) { console.error(error); return; }
       setProductLists((prev) => [...prev, listId]);
     }
-
     onUpdate();
   };
 
@@ -74,6 +66,25 @@ export default function ProductDetailModal({
     const shareUrl = `${window.location.origin}/share/product/${product.id}`;
     navigator.clipboard.writeText(shareUrl);
     alert('Product link copied to clipboard!');
+  };
+
+  const handleRefresh = async () => {
+    if (!user) return;
+    setRefreshing(true);
+    setRefreshMsg(null);
+    try {
+      const result = await refreshProduct(product, user.id);
+      if (result.updated && result.changes.length > 0) {
+        setRefreshMsg({ type: 'success', text: result.changes.join(' · ') });
+        onUpdate();
+      } else {
+        setRefreshMsg({ type: 'success', text: 'Everything looks up to date.' });
+      }
+    } catch {
+      setRefreshMsg({ type: 'error', text: 'Could not reach the product page. Try again later.' });
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   const discount =
@@ -96,12 +107,13 @@ export default function ProductDetailModal({
         </button>
 
         <div className="grid md:grid-cols-2 gap-8">
+          {/* Image */}
           <div className="relative">
             {product.image_url ? (
               <img
                 src={product.image_url}
                 alt={product.title}
-                className="w-full aspect-square object-cover rounded-xl"
+                className={`w-full aspect-square object-cover rounded-xl ${product.is_out_of_stock ? 'grayscale' : ''}`}
                 onError={(e) => {
                   const t = e.currentTarget;
                   t.style.display = 'none';
@@ -116,13 +128,22 @@ export default function ProductDetailModal({
             >
               <ShoppingBag className="w-20 h-20 text-gray-300" />
             </div>
-            {product.is_on_sale && discount > 0 && (
+
+            {product.is_out_of_stock && (
+              <div className="absolute inset-x-0 bottom-0 rounded-b-xl bg-gray-900 bg-opacity-80 text-white text-center py-3 flex items-center justify-center space-x-2">
+                <PackageX className="w-5 h-5" />
+                <span className="font-semibold">Out of Stock</span>
+              </div>
+            )}
+
+            {!product.is_out_of_stock && product.is_on_sale && discount > 0 && (
               <div className="absolute top-4 right-4 bg-red-600 text-white px-4 py-2 rounded-full text-lg font-semibold">
                 -{discount}%
               </div>
             )}
           </div>
 
+          {/* Details */}
           <div className="flex flex-col">
             <div className="mb-4">
               {product.store_name && (
@@ -136,10 +157,20 @@ export default function ProductDetailModal({
                 <p className="text-gray-600 mb-4">{product.description}</p>
               )}
 
-              <div className="flex items-baseline space-x-3 mb-6">
+              {/* Stock warning */}
+              {product.is_out_of_stock && (
+                <div className="mb-4 p-3 bg-gray-100 border border-gray-300 rounded-lg flex items-center space-x-2">
+                  <PackageX className="w-4 h-4 text-gray-600 flex-shrink-0" />
+                  <p className="text-sm text-gray-700 font-medium">
+                    This item is currently out of stock. Refresh to check if it's back.
+                  </p>
+                </div>
+              )}
+
+              <div className="flex items-baseline space-x-3 mb-4">
                 {product.current_price != null ? (
                   <>
-                    <span className="text-3xl font-bold text-gray-900">
+                    <span className={`text-3xl font-bold ${product.is_out_of_stock ? 'text-gray-400' : 'text-gray-900'}`}>
                       ${product.current_price.toFixed(2)}
                     </span>
                     {product.is_on_sale && product.original_price && (
@@ -154,15 +185,22 @@ export default function ProductDetailModal({
               </div>
 
               {product.is_on_sale && product.original_price && product.current_price && (
-                <div className="mb-6 p-3 bg-green-50 border border-green-200 rounded-lg">
+                <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg">
                   <p className="text-sm text-green-800 font-medium">
-                    You save ${(product.original_price - product.current_price).toFixed(2)} (
-                    {discount}% off)
+                    You save ${(product.original_price - product.current_price).toFixed(2)} ({discount}% off)
                   </p>
+                </div>
+              )}
+
+              {/* Refresh result message */}
+              {refreshMsg && (
+                <div className={`mb-4 p-3 rounded-lg border text-sm font-medium ${refreshMsg.type === 'success' ? 'bg-blue-50 border-blue-200 text-blue-800' : 'bg-red-50 border-red-200 text-red-700'}`}>
+                  {refreshMsg.text}
                 </div>
               )}
             </div>
 
+            {/* Lists */}
             <div className="mb-6 border-t pt-4">
               <h3 className="text-sm font-semibold text-gray-900 mb-3">Add to Lists</h3>
               {loading ? (
@@ -170,7 +208,7 @@ export default function ProductDetailModal({
               ) : lists.length === 0 ? (
                 <p className="text-sm text-gray-500">No lists yet. Create one first.</p>
               ) : (
-                <div className="space-y-2 max-h-40 overflow-y-auto">
+                <div className="space-y-2 max-h-36 overflow-y-auto">
                   {lists.map((list) => (
                     <button
                       key={list.id}
@@ -199,6 +237,16 @@ export default function ProductDetailModal({
                 <span>View on {storeName}</span>
                 <ExternalLink className="w-5 h-5" />
               </a>
+
+              {/* Refresh button */}
+              <button
+                onClick={handleRefresh}
+                disabled={refreshing}
+                className="w-full px-4 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors flex items-center justify-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+                <span>{refreshing ? 'Checking…' : 'Check Price & Stock'}</span>
+              </button>
 
               <div className="flex space-x-2">
                 <button
