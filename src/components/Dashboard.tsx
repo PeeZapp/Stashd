@@ -94,6 +94,12 @@ export default function Dashboard() {
     await loadData();
   };
 
+  const handleRenameList = async (listId: string, newName: string) => {
+    const { error } = await supabase.from('lists').update({ name: newName }).eq('id', listId);
+    if (error) { console.error(error); return; }
+    await loadData();
+  };
+
   const handleShareList = async (list: ListWithProducts) => {
     let token = list.share_token;
     if (!list.is_shared || !token) {
@@ -430,6 +436,7 @@ export default function Dashboard() {
                 onClick={() => setView({ type: 'list-detail', listId: list.id })}
                 onDelete={() => handleDeleteList(list.id)}
                 onShare={() => handleShareList(list)}
+                onRename={(newName) => handleRenameList(list.id, newName)}
               />
             ))}
           </div>
