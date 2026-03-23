@@ -77,20 +77,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const { data, error: signUpError } = await supabase.auth.signUp({
         email,
         password,
+        options: { data: { name } }, // DB trigger uses this to set the name
       });
 
       if (signUpError) return { error: signUpError };
       if (!data.user) return { error: new Error('No user returned') };
 
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .insert({
-          id: data.user.id,
-          email,
-          name,
-        });
+      // Only upsert profile when we have an active session.
+      // If email confirmation is required, there is no session yet and the
+      // DB trigger (handle_new_user) will create the profile automatically.
+      if (data.session) {
+        const { error: profileError } = await supabase
+          .from('profiles')
+          .upsert({ id: data.user.id, email, name }, { onConflict: 'id' });
 
-      if (profileError) return { error: profileError };
+        if (profileError) console.warn('Profile upsert failed:', profileError);
+      }
 
       return { error: null };
     } catch (error) {
