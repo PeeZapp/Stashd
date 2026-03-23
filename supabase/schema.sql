@@ -97,6 +97,18 @@ DO $$ BEGIN
     CREATE POLICY "Users can delete own products" ON products FOR DELETE USING (auth.uid() = user_id);
   END IF;
 END $$;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='products' AND policyname='Anyone can view products in shared lists') THEN
+    CREATE POLICY "Anyone can view products in shared lists" ON products FOR SELECT
+      USING (
+        EXISTS (
+          SELECT 1 FROM list_products lp
+          JOIN lists l ON l.id = lp.list_id
+          WHERE lp.product_id = products.id AND l.is_shared = TRUE
+        )
+      );
+  END IF;
+END $$;
 
 -- Auto-update updated_at
 CREATE OR REPLACE FUNCTION update_updated_at()

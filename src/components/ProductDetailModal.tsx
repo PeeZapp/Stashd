@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { X, ExternalLink, Share2, Trash2, Check, ShoppingBag, RefreshCw, PackageX, Info } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { refreshProduct } from '../lib/refreshProduct';
@@ -29,6 +29,15 @@ export default function ProductDetailModal({
   useEffect(() => {
     loadProductLists();
   }, [product.id]);
+
+  const handleEsc = useCallback((e: KeyboardEvent) => {
+    if (e.key === 'Escape') onClose();
+  }, [onClose]);
+
+  useEffect(() => {
+    document.addEventListener('keydown', handleEsc);
+    return () => document.removeEventListener('keydown', handleEsc);
+  }, [handleEsc]);
 
   const loadProductLists = async () => {
     const { data, error } = await supabase
@@ -98,8 +107,14 @@ export default function ProductDetailModal({
   const isEbayPrice = product.price_source === 'ebay';
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto">
-      <div className="bg-white rounded-2xl max-w-3xl w-full p-8 relative my-8">
+    <div
+      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-2xl max-w-3xl w-full p-8 relative my-8"
+        onClick={(e) => e.stopPropagation()}
+      >
         <button
           onClick={onClose}
           className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 transition-colors"

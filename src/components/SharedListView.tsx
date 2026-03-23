@@ -42,7 +42,7 @@ export default function SharedListView({ shareToken }: SharedListViewProps) {
 
       if (productsError) throw productsError;
 
-      const prods = listProducts?.map((lp: { products: Product }) => lp.products) || [];
+      const prods = (listProducts?.map((lp: { products: Product }) => lp.products) || []).filter(Boolean) as Product[];
       setProducts(prods);
     } catch (err) {
       console.error('Error loading shared list:', err);
