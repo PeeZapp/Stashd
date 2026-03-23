@@ -212,6 +212,18 @@ function detectOutOfStock(availabilityText) {
   return OOS.some((kw) => lower.includes(kw));
 }
 
+function queryFromUrl(url) {
+  try {
+    const u = new URL(url);
+    // Get the last non-empty path segment and convert slug to words
+    const segments = u.pathname.split('/').filter(Boolean);
+    const slug = segments[segments.length - 1] ?? '';
+    return slug.replace(/[-_]+/g, ' ').replace(/\d{5,}/g, '').trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 function storeFromUrl(url) {
   try {
     const host = new URL(url).hostname.replace(/^www\./, '');
@@ -303,7 +315,7 @@ ${pageText}`;
 
 // ── eBay Finding API ───────────────────────────────────────
 
-async function searchEbayPrice(query, sku) {
+async function searchEbay(query, sku) {
   const appId = process.env.EBAY_APP_ID;
   if (!appId) return null;
 
@@ -338,18 +350,32 @@ async function searchEbayPrice(query, sku) {
     if (!items.length) return null;
 
     // Pick the lowest priced new item
-    const prices = items
-      .map((item) => {
-        const raw = item?.sellingStatus?.[0]?.currentPrice?.[0]?.['__value__'];
-        return raw ? parseFloat(raw) : null;
-      })
-      .filter((p) => p !== null && p > 0);
+    let bestItem = null;
+    let bestPrice = Infinity;
+    for (const item of items) {
+      const raw = item?.sellingStatus?.[0]?.currentPrice?.[0]?.['__value__'];
+      const price = raw ? parseFloat(raw) : null;
+      if (price && price > 0 && price < bestPrice) {
+        bestPrice = price;
+        bestItem = item;
+      }
+    }
 
-    if (!prices.length) return null;
-    return Math.round(Math.min(...prices) * 100) / 100;
+    if (!bestItem) return null;
+
+    return {
+      price: Math.round(bestPrice * 100) / 100,
+      title: bestItem?.title?.[0] ?? null,
+      image: bestItem?.galleryURL?.[0] ?? null,
+    };
   } catch {
     return null;
   }
+}
+
+async function searchEbayPrice(query, sku) {
+  const result = await searchEbay(query, sku);
+  return result ? result.price : null;
 }
 
 // ── Scrape endpoint ─────────────────────────────────────────
@@ -386,11 +412,21 @@ app.get('/scrape', async (req, res) => {
     html.includes('challenge-platform');
 
   if (isCloudflareChallenge) {
+    const storeName = storeFromUrl(url);
+    const urlQuery = queryFromUrl(url);
+    const ebayQuery = [storeName, urlQuery].filter(Boolean).join(' ');
+    const ebay = ebayQuery ? await searchEbay(ebayQuery, null) : null;
+
     return res.status(403).json({
       error: 'bot_protection',
-      message: "This site blocks automated access. Please visit the site, copy the price, and enter it manually below.",
-      store_name: storeFromUrl(url),
-      _debug: { blocked: true, reason: 'cloudflare' },
+      message: "This site blocks automated access. Details below are sourced from eBay listings and may not be 100% accurate.",
+      store_name: storeName,
+      title: ebay?.title ?? null,
+      current_price: ebay?.price ?? null,
+      image_url: ebay?.image ?? null,
+      price_source: ebay?.price ? 'ebay' : null,
+      ebay_assisted: true,
+      _debug: { blocked: true, reason: 'cloudflare', ebayFound: !!ebay },
     });
   }
 
