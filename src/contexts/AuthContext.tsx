@@ -8,8 +8,11 @@ interface AuthContextType {
   profile: Profile | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
-  signUp: (email: string, password: string, name: string) => Promise<{ error: Error | null }>;
+  signUp: (email: string, password: string, username: string) => Promise<{ error: Error | null }>;
+  signInWithGoogle: () => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
+  deleteAccount: () => Promise<{ error: Error | null }>;
+  refreshProfile: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -60,36 +63,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const refreshProfile = async () => {
+    if (user) await loadProfile(user.id);
+  };
+
   const signIn = async (email: string, password: string) => {
     try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
       return { error };
     } catch (error) {
       return { error: error as Error };
     }
   };
 
-  const signUp = async (email: string, password: string, name: string) => {
+  const signUp = async (email: string, password: string, username: string) => {
     try {
       const { data, error: signUpError } = await supabase.auth.signUp({
         email,
         password,
-        options: { data: { name } }, // DB trigger uses this to set the name
+        options: { data: { name: username } },
       });
 
       if (signUpError) return { error: signUpError };
       if (!data.user) return { error: new Error('No user returned') };
 
-      // Only upsert profile when we have an active session.
-      // If email confirmation is required, there is no session yet and the
-      // DB trigger (handle_new_user) will create the profile automatically.
       if (data.session) {
         const { error: profileError } = await supabase
           .from('profiles')
-          .upsert({ id: data.user.id, email, name }, { onConflict: 'id' });
+          .upsert({ id: data.user.id, email, name: username }, { onConflict: 'id' });
 
         if (profileError) console.warn('Profile upsert failed:', profileError);
       }
@@ -100,13 +101,50 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const signInWithGoogle = async () => {
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: window.location.origin,
+        },
+      });
+      return { error };
+    } catch (error) {
+      return { error: error as Error };
+    }
+  };
+
   const signOut = async () => {
     await supabase.auth.signOut();
     setProfile(null);
   };
 
+  const deleteAccount = async () => {
+    if (!user) return { error: new Error('Not signed in') };
+    try {
+      await supabase.from('notifications').delete().eq('user_id', user.id);
+      const { data: lists } = await supabase
+        .from('lists')
+        .select('id')
+        .eq('user_id', user.id);
+      if (lists) {
+        for (const list of lists) {
+          await supabase.from('list_products').delete().eq('list_id', list.id);
+        }
+      }
+      await supabase.from('lists').delete().eq('user_id', user.id);
+      await supabase.from('products').delete().eq('user_id', user.id);
+      await supabase.from('profiles').delete().eq('id', user.id);
+      await supabase.auth.signOut();
+      return { error: null };
+    } catch (err) {
+      return { error: err as Error };
+    }
+  };
+
   return (
-    <AuthContext.Provider value={{ user, profile, loading, signIn, signUp, signOut }}>
+    <AuthContext.Provider value={{ user, profile, loading, signIn, signUp, signInWithGoogle, signOut, deleteAccount, refreshProfile }}>
       {children}
     </AuthContext.Provider>
   );

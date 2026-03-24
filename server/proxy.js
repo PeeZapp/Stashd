@@ -2,9 +2,17 @@ import express from 'express';
 import OpenAI from 'openai';
 import { chromium } from 'playwright-core';
 import { execSync } from 'child_process';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+import fs from 'fs';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+const isProd = process.env.NODE_ENV === 'production';
+const PORT = isProd ? (process.env.PORT || 5000) : 3001;
 
 const app = express();
-const PORT = 3001;
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -591,6 +599,20 @@ app.get('/scrape', async (req, res) => {
 
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
-app.listen(PORT, () => {
-  console.log(`Scrape proxy running on http://localhost:${PORT}`);
+// ── Production: serve built frontend ───────────────────────
+if (isProd) {
+  const distPath = join(__dirname, '..', 'dist');
+  if (fs.existsSync(distPath)) {
+    app.use(express.static(distPath));
+    app.get('*', (_req, res) => {
+      res.sendFile(join(distPath, 'index.html'));
+    });
+    console.log(`[prod] Serving static files from ${distPath}`);
+  } else {
+    console.warn('[prod] dist/ not found — run npm run build first');
+  }
+}
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`${isProd ? 'Production server' : 'Scrape proxy'} running on http://localhost:${PORT}`);
 });

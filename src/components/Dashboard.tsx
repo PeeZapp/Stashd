@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, ShoppingBag, LogOut, ArrowLeft, Share2, RefreshCw, Info, GitCompare, Bookmark, X } from 'lucide-react';
+import { Plus, ShoppingBag, LogOut, ArrowLeft, Share2, RefreshCw, Info, GitCompare, Bookmark, X, User } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { refreshProduct } from '../lib/refreshProduct';
@@ -17,9 +17,10 @@ type DashboardTab = 'wishlists' | 'owned';
 
 interface DashboardProps {
   prefillUrl?: string;
+  onNavigateToProfile?: () => void;
 }
 
-export default function Dashboard({ prefillUrl }: DashboardProps) {
+export default function Dashboard({ prefillUrl, onNavigateToProfile }: DashboardProps) {
   const { signOut, profile, user } = useAuth();
   const [listsWithProducts, setListsWithProducts] = useState<ListWithProducts[]>([]);
   const [allLists, setAllLists] = useState<List[]>([]);
@@ -273,6 +274,15 @@ export default function Dashboard({ prefillUrl }: DashboardProps) {
               <span className="hidden sm:inline">Add Product</span>
             </button>
             {user && <NotificationsPanel userId={user.id} />}
+            {onNavigateToProfile && (
+              <button
+                onClick={onNavigateToProfile}
+                className="p-2 text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+                title="Profile"
+              >
+                <User className="w-5 h-5" />
+              </button>
+            )}
             <button
               onClick={signOut}
               className="p-2 text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
@@ -568,22 +578,25 @@ export default function Dashboard({ prefillUrl }: DashboardProps) {
             ) : listsWithProducts.length === 0 && !creatingList ? (
               <div className="text-center py-20">
                 <ShoppingBag className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                <h3 className="text-xl font-semibold text-gray-900 mb-2">No lists yet</h3>
-                <p className="text-gray-600 mb-6">Create a list, then add products to it</p>
+                <h3 className="text-xl font-semibold text-gray-900 mb-2">Your stash is empty</h3>
+                <p className="text-gray-500 mb-1 text-sm max-w-sm mx-auto">
+                  Paste any product URL — from any shop — to save it here and track the price.
+                </p>
+                <p className="text-gray-400 mb-6 text-sm">Then organise into lists like "Wishlist", "Birthday ideas", or "Next season".</p>
                 <div className="flex flex-wrap items-center justify-center gap-3">
                   <button
-                    onClick={() => setCreatingList(true)}
+                    onClick={() => setShowAddProduct(true)}
                     className="px-6 py-3 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors inline-flex items-center space-x-2"
                   >
                     <Plus className="w-5 h-5" />
-                    <span>Create Your First List</span>
+                    <span>Save Your First Product</span>
                   </button>
                   <button
-                    onClick={() => setShowAddProduct(true)}
+                    onClick={() => setCreatingList(true)}
                     className="px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors inline-flex items-center space-x-2"
                   >
                     <Plus className="w-5 h-5" />
-                    <span>Add a Product</span>
+                    <span>Create a List</span>
                   </button>
                 </div>
               </div>

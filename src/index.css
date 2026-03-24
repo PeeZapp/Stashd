@@ -1,3 +1,79 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* ── Theme: Default (Charcoal / White) ────────────────────── */
+:root, [data-theme="default"] {
+  --t-primary: #111827;
+  --t-primary-hover: #1f2937;
+  --t-bg: #F9FAFB;
+  --t-accent: #C9956C;
+}
+
+/* ── Theme: Plum Noir + Champagne + Rose Gold ─────────────── */
+[data-theme="plum"] {
+  --t-primary: #3D1C3A;
+  --t-primary-hover: #52274F;
+  --t-bg: #F5ECD7;
+  --t-accent: #C9956C;
+}
+
+/* ── Theme: Chocolate Brown + Blush ──────────────────────── */
+[data-theme="chocolate"] {
+  --t-primary: #3B2314;
+  --t-primary-hover: #503118;
+  --t-bg: #F0D5C8;
+  --t-accent: #987284;
+}
+
+/* ── Theme: Midnight Black + Ivory + Gold ────────────────── */
+[data-theme="midnight"] {
+  --t-primary: #1A1A1A;
+  --t-primary-hover: #2D2D2D;
+  --t-bg: #FAF6EF;
+  --t-accent: #C9A84C;
+}
+
+/* ── Apply theme colors to key structural classes ─────────── */
+/* Primary buttons & filled elements */
+[data-theme="plum"] .bg-gray-900,
+[data-theme="chocolate"] .bg-gray-900,
+[data-theme="midnight"] .bg-gray-900 {
+  background-color: var(--t-primary) !important;
+}
+[data-theme="plum"] .hover\:bg-gray-800:hover,
+[data-theme="chocolate"] .hover\:bg-gray-800:hover,
+[data-theme="midnight"] .hover\:bg-gray-800:hover {
+  background-color: var(--t-primary-hover) !important;
+}
+[data-theme="plum"] .hover\:bg-gray-900:hover,
+[data-theme="chocolate"] .hover\:bg-gray-900:hover,
+[data-theme="midnight"] .hover\:bg-gray-900:hover {
+  background-color: var(--t-primary) !important;
+}
+
+/* Page backgrounds */
+[data-theme="plum"] .bg-gray-50,
+[data-theme="chocolate"] .bg-gray-50,
+[data-theme="midnight"] .bg-gray-50 {
+  background-color: var(--t-bg) !important;
+}
+[data-theme="plum"] .hover\:bg-gray-50:hover,
+[data-theme="chocolate"] .hover\:bg-gray-50:hover,
+[data-theme="midnight"] .hover\:bg-gray-50:hover {
+  background-color: color-mix(in srgb, var(--t-bg) 70%, white) !important;
+}
+
+/* Active tab border indicator */
+[data-theme="plum"] .border-gray-900,
+[data-theme="chocolate"] .border-gray-900,
+[data-theme="midnight"] .border-gray-900 {
+  border-color: var(--t-primary) !important;
+}
+
+/* Focus rings */
+[data-theme="plum"] .focus\:ring-gray-900:focus,
+[data-theme="chocolate"] .focus\:ring-gray-900:focus,
+[data-theme="midnight"] .focus\:ring-gray-900:focus {
+  --tw-ring-color: var(--t-primary) !important;
+}
