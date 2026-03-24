@@ -643,8 +643,8 @@ app.post('/api/delete-account', async (req, res) => {
 if (isProd) {
   const distPath = join(__dirname, '..', 'dist');
   if (fs.existsSync(distPath)) {
-    app.use(express.static(distPath));
-    app.get('*', (_req, res) => {
+    app.use(express.static(distPath, { index: 'index.html' }));
+    app.use((_req, res) => {
       res.sendFile(join(distPath, 'index.html'));
     });
     console.log(`[prod] Serving static files from ${distPath}`);

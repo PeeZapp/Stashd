@@ -76,5 +76,4 @@ externalPort = 4200
 [deployment]
 deploymentTarget = "autoscale"
 build = ["npm", "run", "build"]
-publicDir = "dist"
 run = ["bash", "-c", "NODE_ENV=production node server/proxy.js"]
