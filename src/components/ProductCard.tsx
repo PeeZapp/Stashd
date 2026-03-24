@@ -32,6 +32,7 @@ export default function ProductCard({
   );
   const [savingPrice, setSavingPrice] = useState(false);
   const [markingOwned, setMarkingOwned] = useState(false);
+  const [ownedError, setOwnedError] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const isOwned = product.is_owned ?? false;
@@ -86,20 +87,21 @@ export default function ProductCard({
   const handleMarkOwned = async (e: React.MouseEvent) => {
     e.stopPropagation();
     setMarkingOwned(true);
-    try {
-      const newVal = !isOwned;
-      const { data } = await supabase
-        .from('products')
-        .update({ is_owned: newVal })
-        .eq('id', product.id)
-        .select()
-        .single();
-      if (data && onMarkOwned) onMarkOwned(data as Product);
-    } catch {
-      // silently ignore if column doesn't exist yet
-    } finally {
-      setMarkingOwned(false);
+    setOwnedError(false);
+    const newVal = !isOwned;
+    const { data, error } = await supabase
+      .from('products')
+      .update({ is_owned: newVal } as Record<string, unknown>)
+      .eq('id', product.id)
+      .select()
+      .single();
+    setMarkingOwned(false);
+    if (error) {
+      setOwnedError(true);
+      setTimeout(() => setOwnedError(false), 6000);
+      return;
     }
+    if (data && onMarkOwned) onMarkOwned(data as Product);
   };
 
   const handleCardClick = () => {
@@ -311,13 +313,23 @@ export default function ProductCard({
               onClick={handleMarkOwned}
               disabled={markingOwned}
               className={`w-full text-xs py-1.5 rounded-lg border transition-colors flex items-center justify-center space-x-1.5
-                ${isOwned
-                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
-                  : 'border-gray-200 text-gray-500 hover:border-gray-300 hover:bg-gray-50 hover:text-gray-700'
+                ${ownedError
+                  ? 'border-red-200 bg-red-50 text-red-600'
+                  : isOwned
+                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                    : 'border-gray-200 text-gray-500 hover:border-gray-300 hover:bg-gray-50 hover:text-gray-700'
                 }`}
             >
               <CheckSquare2 className="w-3.5 h-3.5" />
-              <span>{markingOwned ? '…' : isOwned ? 'Owned — undo?' : 'I bought this'}</span>
+              <span>
+                {markingOwned
+                  ? '…'
+                  : ownedError
+                    ? 'Run the SQL migration in Supabase first'
+                    : isOwned
+                      ? 'Owned — undo?'
+                      : 'I bought this'}
+              </span>
             </button>
           </>
         )}
