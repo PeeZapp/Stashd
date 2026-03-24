@@ -529,7 +529,7 @@ async function extractProductData(html, url) {
 
 const PLAYWRIGHT_TIMEOUT_MS = 20000;
 
-app.get('/scrape', async (req, res) => {
+app.get(['/scrape', '/api/scrape'], async (req, res) => {
   const { url } = req.query;
   if (!url || typeof url !== 'string') {
     return res.status(400).json({ error: 'url query param required' });
