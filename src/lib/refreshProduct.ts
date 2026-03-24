@@ -15,28 +15,10 @@ export async function refreshProduct(
 
   const newPrice = scraped.current_price;
   const priceSource = scraped.price_source;
-
-  const newOutOfStock = scraped.is_out_of_stock;
   const oldPrice = product.current_price;
-  const oldOutOfStock = product.is_out_of_stock;
 
   const changes: string[] = [];
   const notifications: Array<{ type: string; message: string }> = [];
-
-  // Stock changes
-  if (oldOutOfStock && !newOutOfStock) {
-    changes.push('Back in stock');
-    notifications.push({
-      type: 'back_in_stock',
-      message: `"${product.title}" is back in stock!`,
-    });
-  } else if (!oldOutOfStock && newOutOfStock) {
-    changes.push('Now out of stock');
-    notifications.push({
-      type: 'out_of_stock',
-      message: `"${product.title}" is now out of stock.`,
-    });
-  }
 
   // Price changes
   if (newPrice !== null && oldPrice !== null && newPrice < oldPrice) {
@@ -64,15 +46,12 @@ export async function refreshProduct(
 
   const hasChanges =
     changes.length > 0 ||
-    newOutOfStock !== oldOutOfStock ||
     (newPrice !== null && newPrice !== oldPrice) ||
     (scraped.image_url && !product.image_url) ||
     (scraped.sku && !product.sku);
 
   if (hasChanges) {
-    const updatePayload: Record<string, unknown> = {
-      is_out_of_stock: newOutOfStock,
-    };
+    const updatePayload: Record<string, unknown> = {};
 
     if (newPrice !== null) {
       updatePayload.current_price = newPrice;
@@ -98,7 +77,7 @@ export async function refreshProduct(
         notifications.map((n) => ({
           user_id: userId,
           product_id: product.id,
-          type: n.type as 'back_in_stock' | 'out_of_stock' | 'on_sale' | 'price_drop',
+          type: n.type as 'on_sale' | 'price_drop',
           message: n.message,
         }))
       );

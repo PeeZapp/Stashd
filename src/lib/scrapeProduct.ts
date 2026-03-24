@@ -3,7 +3,6 @@ export interface ScrapedProduct {
   current_price: number | null;
   original_price: number | null;
   is_on_sale: boolean;
-  is_out_of_stock: boolean;
   image_url: string | null;
   store_name: string | null;
   description: string | null;
@@ -34,7 +33,6 @@ async function fetchViaProxy(url: string): Promise<ScrapedProduct | null> {
         current_price: null,
         original_price: null,
         is_on_sale: false,
-        is_out_of_stock: false,
         image_url: null,
         store_name: data.store_name ?? storeFromUrl(url),
         description: null,
@@ -49,7 +47,6 @@ async function fetchViaProxy(url: string): Promise<ScrapedProduct | null> {
       current_price: data.current_price ?? null,
       original_price: data.original_price ?? null,
       is_on_sale: data.is_on_sale ?? false,
-      is_out_of_stock: data.is_out_of_stock ?? false,
       image_url: data.image_url ?? null,
       store_name: data.store_name ?? null,
       description: data.description ?? null,
@@ -149,7 +146,6 @@ async function fetchViaCorsProxy(url: string): Promise<ScrapedProduct | null> {
     current_price,
     original_price,
     is_on_sale: current_price !== null && original_price !== null && original_price > current_price,
-    is_out_of_stock: false,
     image_url,
     store_name,
     description,
@@ -194,7 +190,6 @@ export async function scrapeProduct(url: string): Promise<ScrapedProduct> {
     current_price: null,
     original_price: null,
     is_on_sale: false,
-    is_out_of_stock: false,
     image_url: null,
     store_name: storeFromUrl(url),
     description: null,

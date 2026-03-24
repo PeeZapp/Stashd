@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { ExternalLink, Trash2, ShoppingBag, PackageX, CheckCircle, Pencil, Info } from 'lucide-react';
+import { ExternalLink, Trash2, ShoppingBag, Pencil, Info } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import type { Product } from '../lib/types';
 
@@ -68,20 +68,14 @@ export default function ProductCard({ product, onClick, onDelete, onPriceUpdate 
   const isEbayPrice = product.price_source === 'ebay';
 
   return (
-    <div
-      className={`bg-white rounded-xl overflow-hidden border transition-shadow group ${
-        product.is_out_of_stock
-          ? 'border-gray-300 opacity-75'
-          : 'border-gray-200 hover:shadow-lg'
-      }`}
-    >
+    <div className="bg-white rounded-xl overflow-hidden border border-gray-200 transition-shadow group hover:shadow-lg">
       {/* Image */}
       <div className="relative aspect-square bg-gray-100 cursor-pointer" onClick={onClick}>
         {product.image_url ? (
           <img
             src={product.image_url}
             alt={product.title}
-            className={`w-full h-full object-cover ${product.is_out_of_stock ? 'grayscale' : ''}`}
+            className="w-full h-full object-cover"
             onError={(e) => {
               const target = e.currentTarget;
               target.style.display = 'none';
@@ -95,16 +89,7 @@ export default function ProductCard({ product, onClick, onDelete, onPriceUpdate 
           </div>
         )}
 
-        {product.is_out_of_stock && (
-          <div className="absolute inset-0 flex items-end">
-            <div className="w-full bg-gray-900 bg-opacity-80 text-white text-center py-2 flex items-center justify-center space-x-1.5">
-              <PackageX className="w-4 h-4" />
-              <span className="text-sm font-semibold tracking-wide">Out of Stock</span>
-            </div>
-          </div>
-        )}
-
-        {!product.is_out_of_stock && product.is_on_sale && discount > 0 && (
+        {product.is_on_sale && discount > 0 && (
           <div className="absolute top-3 right-3 bg-red-600 text-white px-3 py-1 rounded-full text-sm font-semibold">
             -{discount}%
           </div>
@@ -176,7 +161,7 @@ export default function ProductCard({ product, onClick, onDelete, onPriceUpdate 
             >
               {product.current_price != null ? (
                 <>
-                  <span className={`text-xl font-bold ${product.is_out_of_stock ? 'text-gray-400' : 'text-gray-900'}`}>
+                  <span className="text-xl font-bold text-gray-900">
                     ${product.current_price.toFixed(2)}
                   </span>
                   {product.is_on_sale && product.original_price && (
@@ -205,21 +190,6 @@ export default function ProductCard({ product, onClick, onDelete, onPriceUpdate 
             </p>
           </div>
         )}
-
-        {/* Stock status */}
-        <div className="mb-3">
-          {product.is_out_of_stock ? (
-            <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full bg-red-50 border border-red-200 text-red-700 text-xs font-medium">
-              <PackageX className="w-3 h-3" />
-              <span>Out of Stock</span>
-            </span>
-          ) : (
-            <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full bg-green-50 border border-green-200 text-green-700 text-xs font-medium">
-              <CheckCircle className="w-3 h-3" />
-              <span>In Stock</span>
-            </span>
-          )}
-        </div>
 
         {/* Actions */}
         <div className="flex items-center space-x-2">

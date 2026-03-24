@@ -21,7 +21,6 @@ interface FormData {
   imageUrl: string;
   storeName: string;
   description: string;
-  isOutOfStock: boolean;
   sku: string;
   priceSource: 'manual' | 'ebay' | 'scraped' | null;
 }
@@ -34,7 +33,6 @@ const emptyForm = (sourceUrl = ''): FormData => ({
   imageUrl: '',
   storeName: '',
   description: '',
-  isOutOfStock: false,
   sku: '',
   priceSource: null,
 });
@@ -80,7 +78,6 @@ export default function AddProductModal({ lists, onClose, onSuccess }: AddProduc
         imageUrl: scraped.image_url ?? '',
         storeName: scraped.store_name ?? '',
         description: scraped.description ?? '',
-        isOutOfStock: scraped.is_out_of_stock,
         sku: scraped.sku ?? '',
         priceSource: scraped.price_source,
       });
@@ -120,7 +117,7 @@ export default function AddProductModal({ lists, onClose, onSuccess }: AddProduc
         currentPrice !== null && originalPrice !== null && originalPrice > currentPrice;
 
       // Build insert payload — only include columns confirmed to exist.
-      // New columns (is_out_of_stock, sku, price_source) require the migration in
+      // New columns (sku, price_source) require the migration in
       // supabase/migrations/20260323000002_add_sku_and_price_source.sql to be run first.
       // We try with the full payload and gracefully retry without extended columns on error.
       const basePayload = {
@@ -137,7 +134,6 @@ export default function AddProductModal({ lists, onClose, onSuccess }: AddProduc
 
       const extendedPayload = {
         ...basePayload,
-        is_out_of_stock: formData.isOutOfStock,
         sku: formData.sku.trim() || null,
         price_source: formData.priceSource,
       };

@@ -32,7 +32,6 @@ export interface Database {
           current_price: number | null;
           original_price: number | null;
           is_on_sale: boolean;
-          is_out_of_stock: boolean;
           image_url: string | null;
           source_url: string;
           store_name: string | null;
@@ -49,7 +48,6 @@ export interface Database {
           current_price?: number | null;
           original_price?: number | null;
           is_on_sale?: boolean;
-          is_out_of_stock?: boolean;
           image_url?: string | null;
           source_url: string;
           store_name?: string | null;
@@ -66,7 +64,6 @@ export interface Database {
           current_price?: number | null;
           original_price?: number | null;
           is_on_sale?: boolean;
-          is_out_of_stock?: boolean;
           image_url?: string | null;
           source_url?: string;
           store_name?: string | null;
@@ -131,7 +128,7 @@ export interface Database {
           id: string;
           user_id: string;
           product_id: string | null;
-          type: 'back_in_stock' | 'out_of_stock' | 'on_sale' | 'price_drop';
+          type: 'on_sale' | 'price_drop';
           message: string;
           is_read: boolean;
           created_at: string;
@@ -140,7 +137,7 @@ export interface Database {
           id?: string;
           user_id: string;
           product_id?: string | null;
-          type: 'back_in_stock' | 'out_of_stock' | 'on_sale' | 'price_drop';
+          type: 'on_sale' | 'price_drop';
           message: string;
           is_read?: boolean;
           created_at?: string;

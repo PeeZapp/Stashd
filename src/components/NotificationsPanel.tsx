@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Bell, PackageCheck, TrendingDown, Tag, PackageX, X } from 'lucide-react';
+import { Bell, TrendingDown, Tag, X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import type { Notification } from '../lib/types';
 
@@ -9,19 +9,15 @@ interface NotificationsPanelProps {
 
 const iconFor = (type: Notification['type']) => {
   switch (type) {
-    case 'back_in_stock': return <PackageCheck className="w-4 h-4 text-green-600" />;
-    case 'out_of_stock':  return <PackageX className="w-4 h-4 text-gray-500" />;
-    case 'on_sale':       return <Tag className="w-4 h-4 text-red-500" />;
-    case 'price_drop':    return <TrendingDown className="w-4 h-4 text-blue-500" />;
+    case 'on_sale':    return <Tag className="w-4 h-4 text-red-500" />;
+    case 'price_drop': return <TrendingDown className="w-4 h-4 text-blue-500" />;
   }
 };
 
 const bgFor = (type: Notification['type']) => {
   switch (type) {
-    case 'back_in_stock': return 'bg-green-50';
-    case 'out_of_stock':  return 'bg-gray-50';
-    case 'on_sale':       return 'bg-red-50';
-    case 'price_drop':    return 'bg-blue-50';
+    case 'on_sale':    return 'bg-red-50';
+    case 'price_drop': return 'bg-blue-50';
   }
 };
 
@@ -120,7 +116,7 @@ export default function NotificationsPanel({ userId }: NotificationsPanelProps) 
                 <Bell className="w-8 h-8 text-gray-200 mx-auto mb-2" />
                 <p className="text-sm text-gray-400">No alerts yet</p>
                 <p className="text-xs text-gray-400 mt-1">
-                  Refresh products to check for price drops and stock changes
+                  Refresh products to check for price drops and sale alerts
                 </p>
               </div>
             ) : (

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { X, ExternalLink, Share2, Trash2, Check, ShoppingBag, RefreshCw, PackageX, Info } from 'lucide-react';
+import { X, ExternalLink, Share2, Trash2, Check, ShoppingBag, RefreshCw, Info } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { refreshProduct } from '../lib/refreshProduct';
 import { useAuth } from '../contexts/AuthContext';
@@ -129,7 +129,7 @@ export default function ProductDetailModal({
               <img
                 src={product.image_url}
                 alt={product.title}
-                className={`w-full aspect-square object-cover rounded-xl ${product.is_out_of_stock ? 'grayscale' : ''}`}
+                className="w-full aspect-square object-cover rounded-xl"
                 onError={(e) => {
                   const t = e.currentTarget;
                   t.style.display = 'none';
@@ -145,14 +145,7 @@ export default function ProductDetailModal({
               <ShoppingBag className="w-20 h-20 text-gray-300" />
             </div>
 
-            {product.is_out_of_stock && (
-              <div className="absolute inset-x-0 bottom-0 rounded-b-xl bg-gray-900 bg-opacity-80 text-white text-center py-3 flex items-center justify-center space-x-2">
-                <PackageX className="w-5 h-5" />
-                <span className="font-semibold">Out of Stock</span>
-              </div>
-            )}
-
-            {!product.is_out_of_stock && product.is_on_sale && discount > 0 && (
+            {product.is_on_sale && discount > 0 && (
               <div className="absolute top-4 right-4 bg-red-600 text-white px-4 py-2 rounded-full text-lg font-semibold">
                 -{discount}%
               </div>
@@ -180,21 +173,11 @@ export default function ProductDetailModal({
                 <p className="text-gray-600 mb-4">{product.description}</p>
               )}
 
-              {/* Stock warning */}
-              {product.is_out_of_stock && (
-                <div className="mb-4 p-3 bg-gray-100 border border-gray-300 rounded-lg flex items-center space-x-2">
-                  <PackageX className="w-4 h-4 text-gray-600 flex-shrink-0" />
-                  <p className="text-sm text-gray-700 font-medium">
-                    This item is currently out of stock. Refresh to check if it's back.
-                  </p>
-                </div>
-              )}
-
               {/* Price */}
               <div className="flex items-baseline space-x-3 mb-1">
                 {product.current_price != null ? (
                   <>
-                    <span className={`text-3xl font-bold ${product.is_out_of_stock ? 'text-gray-400' : 'text-gray-900'}`}>
+                    <span className="text-3xl font-bold text-gray-900">
                       ${product.current_price.toFixed(2)}
                     </span>
                     {product.is_on_sale && product.original_price && (
@@ -288,13 +271,8 @@ export default function ProductDetailModal({
                 className="w-full px-4 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors flex items-center justify-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
-                <span>{refreshing ? 'Checking…' : 'Check Price & Stock'}</span>
+                <span>{refreshing ? 'Checking…' : 'Check Price'}</span>
               </button>
-
-              {/* Refresh disclaimer */}
-              <p className="text-xs text-gray-400 text-center">
-                Prices from eBay marketplace · stock from retailer page where available
-              </p>
 
               <div className="flex space-x-2">
                 <button
