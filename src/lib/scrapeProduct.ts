@@ -10,7 +10,6 @@ export interface ScrapedProduct {
   sku: string | null;
   price_source: 'manual' | 'ebay' | 'scraped' | null;
   botProtected?: boolean;
-  ebayAssisted?: boolean;
 }
 
 export function parsePrice(raw: string | number | null | undefined): number | null {
@@ -31,18 +30,17 @@ async function fetchViaProxy(url: string): Promise<ScrapedProduct | null> {
     const data = await res.json();
     if (data.error === 'bot_protection') {
       return {
-        title: data.title ?? null,
-        current_price: data.current_price ?? null,
+        title: null,
+        current_price: null,
         original_price: null,
         is_on_sale: false,
         is_out_of_stock: false,
-        image_url: data.image_url ?? null,
+        image_url: null,
         store_name: data.store_name ?? storeFromUrl(url),
         description: null,
         sku: null,
-        price_source: data.price_source ?? null,
+        price_source: null,
         botProtected: true,
-        ebayAssisted: data.ebay_assisted && (!!data.title || !!data.image_url),
       };
     }
     if (!res.ok || data.error) return null;
@@ -58,26 +56,6 @@ async function fetchViaProxy(url: string): Promise<ScrapedProduct | null> {
       sku: data.sku ?? null,
       price_source: data.price_source ?? null,
     };
-  } catch {
-    return null;
-  }
-}
-
-// ── eBay price lookup ──────────────────────────────────────
-
-export async function fetchEbayPrice(
-  query: string,
-  sku?: string | null
-): Promise<number | null> {
-  try {
-    const params = new URLSearchParams({ query });
-    if (sku) params.set('sku', sku);
-    const res = await fetch(`/api/ebay-price?${params}`, {
-      signal: AbortSignal.timeout(10000),
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return typeof data.price === 'number' ? data.price : null;
   } catch {
     return null;
   }

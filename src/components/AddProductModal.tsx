@@ -48,7 +48,6 @@ export default function AddProductModal({ lists, onClose, onSuccess }: AddProduc
   const [selectedListIds, setSelectedListIds] = useState<string[]>([]);
   const [newListName, setNewListName] = useState('');
   const [botProtected, setBotProtected] = useState(false);
-  const [ebayAssisted, setEbayAssisted] = useState(false);
 
   const update = (field: keyof FormData, value: string | boolean | null) =>
     setFormData((prev) => ({ ...prev, [field]: value }));
@@ -73,7 +72,6 @@ export default function AddProductModal({ lists, onClose, onSuccess }: AddProduc
       const scraped = await scrapeProduct(url);
 
       setBotProtected(scraped.botProtected ?? false);
-      setEbayAssisted(scraped.ebayAssisted ?? false);
       setFormData({
         sourceUrl: url,
         title: scraped.title ?? '',
@@ -353,31 +351,8 @@ export default function AddProductModal({ lists, onClose, onSuccess }: AddProduc
                 />
               </div>
 
-              {/* Bot protected + eBay assisted */}
-              {botProtected && ebayAssisted && (
-                <div className="flex items-start space-x-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
-                  <Info className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
-                  <div>
-                    <p className="text-sm font-medium text-amber-800">Details sourced from eBay listings</p>
-                    <p className="text-xs text-amber-700 mt-0.5">
-                      {formData.storeName || 'This retailer'} blocks automated access, so the title, image, and price below were pulled from eBay listings — they may not be 100% accurate. Please review and update anything that looks wrong before saving.
-                    </p>
-                    {formData.sourceUrl && (
-                      <a
-                        href={formData.sourceUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-xs text-amber-700 font-medium underline mt-1"
-                      >
-                        Open product page to verify <ExternalLink className="w-3 h-3" />
-                      </a>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* Bot protected + no eBay data */}
-              {botProtected && !ebayAssisted && (
+              {/* Bot protection banner */}
+              {botProtected && (
                 <div className="flex items-start space-x-3 p-3 bg-red-50 border border-red-200 rounded-lg">
                   <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
                   <div>

@@ -313,96 +313,6 @@ ${pageText}`;
   }
 }
 
-// ── eBay Browse API (OAuth Client Credentials) ─────────────
-
-let _ebayToken = null;
-let _ebayTokenExpiry = 0;
-
-async function getEbayToken() {
-  if (_ebayToken && Date.now() < _ebayTokenExpiry) return _ebayToken;
-  const appId = process.env.EBAY_APP_ID;
-  const certId = process.env.EBAY_CERT_ID;
-  if (!appId || !certId) return null;
-  try {
-    const credentials = Buffer.from(`${appId}:${certId}`).toString('base64');
-    const res = await fetch('https://api.ebay.com/identity/v1/oauth2/token', {
-      method: 'POST',
-      headers: {
-        Authorization: `Basic ${credentials}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: 'grant_type=client_credentials&scope=https%3A%2F%2Fapi.ebay.com%2Foauth%2Fapi_scope',
-      signal: AbortSignal.timeout(8000),
-    });
-    const data = await res.json();
-    if (data.access_token) {
-      _ebayToken = data.access_token;
-      _ebayTokenExpiry = Date.now() + ((data.expires_in ?? 7200) - 60) * 1000;
-      console.log('[eBay] OAuth token obtained successfully');
-      return _ebayToken;
-    }
-    console.log('[eBay] Token error:', JSON.stringify(data));
-    return null;
-  } catch (e) {
-    console.log('[eBay] Token fetch failed:', e.message);
-    return null;
-  }
-}
-
-async function searchEbay(query, sku) {
-  const token = await getEbayToken();
-  if (!token) return null;
-
-  const isNumericId = sku && /^\d{8,14}$/.test(sku.replace(/-/g, ''));
-  const q = isNumericId ? sku : query;
-
-  const params = new URLSearchParams({
-    q,
-    filter: 'conditions:{NEW}',
-    sort: 'price',
-    limit: '5',
-  });
-
-  try {
-    const res = await fetch(
-      `https://api.ebay.com/buy/browse/v1/item_summary/search?${params}`,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'X-EBAY-C-MARKETPLACE-ID': 'EBAY_AU',
-        },
-        signal: AbortSignal.timeout(8000),
-      }
-    );
-    const json = await res.json();
-    if (json.errors) {
-      console.log('[eBay] Browse API error:', JSON.stringify(json.errors[0]));
-      return null;
-    }
-    const items = json.itemSummaries ?? [];
-    if (!items.length) return null;
-
-    items.sort(
-      (a, b) =>
-        parseFloat(a.price?.value ?? Infinity) -
-        parseFloat(b.price?.value ?? Infinity)
-    );
-    const best = items[0];
-    return {
-      price: best.price?.value ? Math.round(parseFloat(best.price.value) * 100) / 100 : null,
-      title: best.title ?? null,
-      image: best.image?.imageUrl ?? null,
-    };
-  } catch (e) {
-    console.log('[eBay] Browse API fetch failed:', e.message);
-    return null;
-  }
-}
-
-async function searchEbayPrice(query, sku) {
-  const result = await searchEbay(query, sku);
-  return result ? result.price : null;
-}
 
 // ── Scrape endpoint ─────────────────────────────────────────
 
@@ -439,23 +349,12 @@ app.get('/scrape', async (req, res) => {
 
   if (isCloudflareChallenge) {
     const storeName = storeFromUrl(url);
-    const urlQuery = queryFromUrl(url);
-    const ebayQuery = [storeName, urlQuery].filter(Boolean).join(' ');
     console.log(`[bot-protection] detected for ${url}`);
-    console.log(`[bot-protection] eBay query: "${ebayQuery}"`);
-    const ebay = ebayQuery ? await searchEbay(ebayQuery, null) : null;
-    console.log(`[bot-protection] eBay result:`, JSON.stringify(ebay));
-
     return res.status(403).json({
       error: 'bot_protection',
-      message: "This site blocks automated access. Details below are sourced from eBay listings and may not be 100% accurate.",
+      message: 'This site blocks automated access. Please enter the product details manually.',
       store_name: storeName,
-      title: ebay?.title ?? null,
-      current_price: ebay?.price ?? null,
-      image_url: ebay?.image ?? null,
-      price_source: ebay?.price ? 'ebay' : null,
-      ebay_assisted: true,
-      _debug: { blocked: true, reason: 'cloudflare', ebayFound: !!ebay },
+      _debug: { blocked: true, reason: 'cloudflare' },
     });
   }
 
@@ -559,33 +458,8 @@ app.get('/scrape', async (req, res) => {
   });
 });
 
-// ── eBay price lookup endpoint ─────────────────────────────
-
-app.get('/ebay-price', async (req, res) => {
-  const { query, sku } = req.query;
-  if (!query && !sku) {
-    return res.status(400).json({ error: 'query or sku required' });
-  }
-
-  if (!process.env.EBAY_APP_ID || !process.env.EBAY_CERT_ID) {
-    return res.status(503).json({ error: 'EBAY_APP_ID and EBAY_CERT_ID required', price: null });
-  }
-
-  const price = await searchEbayPrice(query, sku);
-  res.json({ price, source: 'ebay' });
-});
-
-app.get('/health', (_req, res) => res.json({
-  ok: true,
-  ebay: !!(process.env.EBAY_APP_ID && process.env.EBAY_CERT_ID),
-}));
+app.get('/health', (_req, res) => res.json({ ok: true }));
 
 app.listen(PORT, () => {
-  const hasApp = !!process.env.EBAY_APP_ID;
-  const hasCert = !!process.env.EBAY_CERT_ID;
-  const ebayStatus = (hasApp && hasCert)
-    ? '✓ eBay Browse API configured (App ID + Cert ID)'
-    : `⚠ eBay incomplete — ${!hasApp ? 'EBAY_APP_ID' : 'EBAY_CERT_ID'} missing`;
   console.log(`Scrape proxy running on http://localhost:${PORT}`);
-  console.log(ebayStatus);
 });

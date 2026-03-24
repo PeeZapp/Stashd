@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import { scrapeProduct, fetchEbayPrice } from './scrapeProduct';
+import { scrapeProduct } from './scrapeProduct';
 import type { Product } from './types';
 
 export interface RefreshResult {
@@ -13,20 +13,8 @@ export async function refreshProduct(
 ): Promise<RefreshResult> {
   const scraped = await scrapeProduct(product.source_url);
 
-  // If scraping returned no price but we have a title, fall back to eBay
-  let newPrice = scraped.current_price;
-  let priceSource = scraped.price_source;
-
-  if (newPrice === null && (scraped.title ?? product.title)) {
-    const ebayPrice = await fetchEbayPrice(
-      scraped.title ?? product.title,
-      scraped.sku ?? product.sku
-    );
-    if (ebayPrice !== null) {
-      newPrice = ebayPrice;
-      priceSource = 'ebay';
-    }
-  }
+  const newPrice = scraped.current_price;
+  const priceSource = scraped.price_source;
 
   const newOutOfStock = scraped.is_out_of_stock;
   const oldPrice = product.current_price;
@@ -51,7 +39,6 @@ export async function refreshProduct(
   }
 
   // Price changes
-  const priceLabel = priceSource === 'ebay' ? ' (eBay market price)' : '';
   if (newPrice !== null && oldPrice !== null && newPrice < oldPrice) {
     const diff = (oldPrice - newPrice).toFixed(2);
     const isOnSale =
@@ -60,15 +47,15 @@ export async function refreshProduct(
         : product.original_price !== null
         ? newPrice < product.original_price
         : false;
-    changes.push(`Price dropped $${diff} — now $${newPrice.toFixed(2)}${priceLabel}`);
+    changes.push(`Price dropped $${diff} — now $${newPrice.toFixed(2)}`);
     notifications.push({
       type: isOnSale ? 'on_sale' : 'price_drop',
-      message: `"${product.title}" dropped $${diff} — now $${newPrice.toFixed(2)}${priceLabel}.`,
+      message: `"${product.title}" dropped $${diff} — now $${newPrice.toFixed(2)}.`,
     });
   } else if (newPrice !== null && oldPrice === null) {
-    changes.push(`Price found: $${newPrice.toFixed(2)}${priceLabel}`);
+    changes.push(`Price found: $${newPrice.toFixed(2)}`);
   } else if (newPrice !== null && oldPrice !== null && newPrice > oldPrice) {
-    changes.push(`Price updated to $${newPrice.toFixed(2)}${priceLabel}`);
+    changes.push(`Price updated to $${newPrice.toFixed(2)}`);
   }
 
   if (scraped.image_url && !product.image_url) {
