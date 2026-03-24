@@ -38,6 +38,7 @@ export interface Database {
           description: string | null;
           sku: string | null;
           price_source: 'manual' | 'ebay' | 'scraped' | null;
+          is_owned: boolean;
           created_at: string;
           updated_at: string;
         };
@@ -54,6 +55,7 @@ export interface Database {
           description?: string | null;
           sku?: string | null;
           price_source?: 'manual' | 'ebay' | 'scraped' | null;
+          is_owned?: boolean;
           created_at?: string;
           updated_at?: string;
         };
@@ -70,6 +72,7 @@ export interface Database {
           description?: string | null;
           sku?: string | null;
           price_source?: 'manual' | 'ebay' | 'scraped' | null;
+          is_owned?: boolean;
           created_at?: string;
           updated_at?: string;
         };

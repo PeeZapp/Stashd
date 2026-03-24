@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { X, Plus, AlertCircle, Loader, ExternalLink, ChevronLeft, DollarSign, Info } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
@@ -9,6 +9,7 @@ interface AddProductModalProps {
   lists: List[];
   onClose: () => void;
   onSuccess: () => void;
+  prefillUrl?: string;
 }
 
 type Step = 'url' | 'fetching' | 'details';
@@ -37,12 +38,12 @@ const emptyForm = (sourceUrl = ''): FormData => ({
   priceSource: null,
 });
 
-export default function AddProductModal({ lists, onClose, onSuccess }: AddProductModalProps) {
+export default function AddProductModal({ lists, onClose, onSuccess, prefillUrl }: AddProductModalProps) {
   const { user } = useAuth();
   const [step, setStep] = useState<Step>('url');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [formData, setFormData] = useState<FormData>(emptyForm());
+  const [formData, setFormData] = useState<FormData>(emptyForm(prefillUrl ?? ''));
   const [selectedListIds, setSelectedListIds] = useState<string[]>([]);
   const [newListName, setNewListName] = useState('');
   const [botProtected, setBotProtected] = useState(false);
@@ -89,6 +90,10 @@ export default function AddProductModal({ lists, onClose, onSuccess }: AddProduc
       setStep('details');
     }
   };
+
+  useEffect(() => {
+    if (prefillUrl) handleFetchUrl();
+  }, []);
 
   const handleSkipToManual = () => {
     setError('');

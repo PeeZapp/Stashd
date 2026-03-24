@@ -7,7 +7,7 @@ import SharedProductView from './components/SharedProductView';
 
 type Route =
   | { type: 'landing' }
-  | { type: 'dashboard' }
+  | { type: 'dashboard'; prefillUrl?: string }
   | { type: 'shared-list'; param: string }
   | { type: 'shared-product'; param: string };
 
@@ -18,6 +18,11 @@ function getInitialRoute(): Route {
   }
   if (path.startsWith('/share/product/')) {
     return { type: 'shared-product', param: path.replace('/share/product/', '') };
+  }
+  if (path === '/add') {
+    const params = new URLSearchParams(window.location.search);
+    const url = params.get('url') ?? undefined;
+    return { type: 'dashboard', prefillUrl: url };
   }
   return { type: 'landing' };
 }
@@ -31,7 +36,11 @@ function App() {
     if (path.startsWith('/share/')) return;
 
     if (user) {
-      setRoute({ type: 'dashboard' });
+      // Preserve prefillUrl if already set (e.g. bookmarklet navigation)
+      setRoute((prev) => ({
+        type: 'dashboard',
+        prefillUrl: prev.type === 'dashboard' ? prev.prefillUrl : undefined,
+      }));
     } else {
       setRoute({ type: 'landing' });
     }
@@ -54,7 +63,7 @@ function App() {
   }
 
   if (user) {
-    return <Dashboard />;
+    return <Dashboard prefillUrl={route.type === 'dashboard' ? route.prefillUrl : undefined} />;
   }
 
   return <LandingPage />;
