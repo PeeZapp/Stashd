@@ -1,5 +1,7 @@
 import express from 'express';
 import OpenAI from 'openai';
+import { chromium } from 'playwright-core';
+import { execSync } from 'child_process';
 
 const app = express();
 const PORT = 3001;
@@ -33,6 +35,109 @@ const BROWSER_HEADERS = {
   'Sec-Fetch-User': '?1',
   'Upgrade-Insecure-Requests': '1',
 };
+
+// ── Playwright browser singleton ────────────────────────────
+
+function findChromium() {
+  const candidates = [
+    // Try shell PATH first (picks up Nix-installed chromium)
+    () => execSync('which chromium', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim(),
+    () => execSync('which chromium-browser', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim(),
+    () => execSync('which google-chrome', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim(),
+    // Search Nix store directly as fallback
+    () => execSync(
+      'find /nix/store -maxdepth 4 -name "chromium" -type f 2>/dev/null | grep -v sandbox | head -1',
+      { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
+    ).trim(),
+  ];
+  for (const fn of candidates) {
+    try {
+      const p = fn();
+      if (p) { console.log(`[playwright] Chromium found at: ${p}`); return p; }
+    } catch { /* try next */ }
+  }
+  return null;
+}
+
+const CHROMIUM_PATH = findChromium();
+
+let _browser = null;
+
+async function getBrowser() {
+  if (_browser && _browser.isConnected()) return _browser;
+  if (!CHROMIUM_PATH) throw new Error('Chromium executable not found');
+  _browser = await chromium.launch({
+    executablePath: CHROMIUM_PATH,
+    headless: true,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--no-first-run',
+      '--no-zygote',
+      '--single-process',
+      '--disable-blink-features=AutomationControlled',
+      '--disable-features=IsolateOrigins,site-per-process',
+    ],
+  });
+  console.log('[playwright] browser launched');
+  return _browser;
+}
+
+async function closeBrowser() {
+  if (_browser) {
+    await _browser.close().catch(() => {});
+    _browser = null;
+  }
+}
+
+process.on('exit', () => { if (_browser) _browser.close().catch(() => {}); });
+process.on('SIGTERM', async () => { await closeBrowser(); process.exit(0); });
+process.on('SIGINT', async () => { await closeBrowser(); process.exit(0); });
+
+async function scrapeWithPlaywright(url) {
+  const bw = await getBrowser();
+  const context = await bw.newContext({
+    userAgent:
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    viewport: { width: 1280, height: 800 },
+    extraHTTPHeaders: {
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Accept':
+        'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+    },
+    ignoreHTTPSErrors: true,
+  });
+
+  await context.addInitScript(() => {
+    Object.defineProperty(navigator, 'webdriver', { get: () => false });
+    Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
+    Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+    window.chrome = { runtime: {} };
+  });
+
+  const page = await context.newPage();
+
+  try {
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    // Give JS-heavy pages extra time to render product data
+    await page.waitForTimeout(3000);
+    const html = await page.content();
+    await context.close();
+    return html;
+  } catch (err) {
+    await context.close().catch(() => {});
+    throw err;
+  }
+}
+
+// Verify Playwright/Chromium available on startup
+getBrowser().then(() => {
+  console.log('[playwright] Chromium ready');
+}).catch((err) => {
+  console.warn('[playwright] Chromium unavailable — bot-protected sites will require manual entry:', err.message);
+});
 
 // ── Parsing helpers ────────────────────────────────────────
 
@@ -105,7 +210,6 @@ function parseJsonLd(html) {
         if (typeof item.name === 'string') result.title = item.name;
         if (typeof item.description === 'string') result.description = item.description;
 
-        // SKU / identifiers
         if (typeof item.sku === 'string' && item.sku.trim()) result.sku = item.sku.trim();
         else if (typeof item.mpn === 'string' && item.mpn.trim()) result.sku = item.mpn.trim();
         else if (typeof item.gtin14 === 'string') result.sku = item.gtin14.trim();
@@ -114,14 +218,12 @@ function parseJsonLd(html) {
         else if (typeof item.gtin8 === 'string') result.sku = item.gtin8.trim();
         else if (typeof item.gtin === 'string') result.sku = item.gtin.trim();
 
-        // Image
         const img = item.image;
         if (typeof img === 'string') result.image = img;
         else if (Array.isArray(img) && img.length > 0)
           result.image = typeof img[0] === 'string' ? img[0] : img[0].url;
         else if (img && typeof img === 'object') result.image = img.url;
 
-        // Offers
         const offersRaw = item.offers;
         const offers = Array.isArray(offersRaw) ? offersRaw[0] : offersRaw;
         if (offers && typeof offers === 'object') {
@@ -212,18 +314,6 @@ function detectOutOfStock(availabilityText) {
   return OOS.some((kw) => lower.includes(kw));
 }
 
-function queryFromUrl(url) {
-  try {
-    const u = new URL(url);
-    // Get the last non-empty path segment and convert slug to words
-    const segments = u.pathname.split('/').filter(Boolean);
-    const slug = segments[segments.length - 1] ?? '';
-    return slug.replace(/[-_]+/g, ' ').replace(/\d{5,}/g, '').trim() || null;
-  } catch {
-    return null;
-  }
-}
-
 function storeFromUrl(url) {
   try {
     const host = new URL(url).hostname.replace(/^www\./, '');
@@ -234,10 +324,20 @@ function storeFromUrl(url) {
   }
 }
 
+function isCloudflareChallenge(html) {
+  return (
+    html.includes('<title>Just a moment...</title>') ||
+    html.includes('cf-browser-verification') ||
+    html.includes('cf_chl_') ||
+    html.includes('Checking your browser before accessing') ||
+    html.includes('Enable JavaScript and cookies to continue') ||
+    html.includes('challenge-platform')
+  );
+}
+
 // ── LLM fallback ───────────────────────────────────────────
 
 function stripHtmlToText(html) {
-  // Remove script, style, svg, nav, footer blocks entirely
   let text = html
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
     .replace(/<style[\s\S]*?<\/style>/gi, ' ')
@@ -245,16 +345,15 @@ function stripHtmlToText(html) {
     .replace(/<nav[\s\S]*?<\/nav>/gi, ' ')
     .replace(/<footer[\s\S]*?<\/footer>/gi, ' ')
     .replace(/<header[\s\S]*?<\/header>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')           // Strip remaining tags
+    .replace(/<[^>]+>/g, ' ')
     .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&nbsp;/g, ' ')
     .replace(/&#\d+;/g, ' ')
-    .replace(/\s{2,}/g, ' ')            // Collapse whitespace
+    .replace(/\s{2,}/g, ' ')
     .trim();
 
-  // Limit to ~6000 chars to keep token cost low
   return text.length > 6000 ? text.slice(0, 6000) : text;
 }
 
@@ -313,51 +412,9 @@ ${pageText}`;
   }
 }
 
+// ── Shared HTML → product data extractor ───────────────────
 
-// ── Scrape endpoint ─────────────────────────────────────────
-
-app.get('/scrape', async (req, res) => {
-  const { url } = req.query;
-  if (!url || typeof url !== 'string') {
-    return res.status(400).json({ error: 'url query param required' });
-  }
-
-  let html = '';
-  try {
-    const response = await fetch(url, {
-      headers: { ...BROWSER_HEADERS, Referer: new URL(url).origin + '/' },
-      redirect: 'follow',
-      signal: AbortSignal.timeout(15000),
-    });
-    html = await response.text();
-  } catch (err) {
-    return res.status(502).json({ error: `Fetch failed: ${err.message}` });
-  }
-
-  if (!html || html.length < 200) {
-    return res.status(502).json({ error: 'Empty or too-short response from target site' });
-  }
-
-  // Detect Cloudflare / bot-protection challenge pages
-  const isCloudflareChallenge =
-    html.includes('<title>Just a moment...</title>') ||
-    html.includes('cf-browser-verification') ||
-    html.includes('cf_chl_') ||
-    html.includes('Checking your browser before accessing') ||
-    html.includes('Enable JavaScript and cookies to continue') ||
-    html.includes('challenge-platform');
-
-  if (isCloudflareChallenge) {
-    const storeName = storeFromUrl(url);
-    console.log(`[bot-protection] detected for ${url}`);
-    return res.status(403).json({
-      error: 'bot_protection',
-      message: 'This site blocks automated access. Please enter the product details manually.',
-      store_name: storeName,
-      _debug: { blocked: true, reason: 'cloudflare' },
-    });
-  }
-
+async function extractProductData(html, url) {
   let title = null;
   let current_price = null;
   let original_price = null;
@@ -443,7 +500,7 @@ app.get('/scrape', async (req, res) => {
   if (current_price !== null) current_price = Math.round(current_price * 100) / 100;
   if (original_price !== null) original_price = Math.round(original_price * 100) / 100;
 
-  res.json({
+  return {
     title,
     current_price,
     original_price,
@@ -455,7 +512,58 @@ app.get('/scrape', async (req, res) => {
     sku,
     price_source,
     _debug: { htmlLength: html.length, hasJsonLd: ld !== null, llmUsed },
-  });
+  };
+}
+
+// ── Scrape endpoint ─────────────────────────────────────────
+
+app.get('/scrape', async (req, res) => {
+  const { url } = req.query;
+  if (!url || typeof url !== 'string') {
+    return res.status(400).json({ error: 'url query param required' });
+  }
+
+  // Step 1: fast HTTP fetch
+  let html = '';
+  try {
+    const response = await fetch(url, {
+      headers: { ...BROWSER_HEADERS, Referer: new URL(url).origin + '/' },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(15000),
+    });
+    html = await response.text();
+  } catch (err) {
+    return res.status(502).json({ error: `Fetch failed: ${err.message}` });
+  }
+
+  if (!html || html.length < 200) {
+    return res.status(502).json({ error: 'Empty or too-short response from target site' });
+  }
+
+  // Step 2: if Cloudflare challenge detected, retry with headless browser
+  if (isCloudflareChallenge(html)) {
+    console.log(`[bot-protection] Cloudflare detected for ${url} — retrying with Playwright`);
+    try {
+      html = await scrapeWithPlaywright(url);
+      console.log(`[playwright] rendered ${html.length} bytes for ${url}`);
+      // Check if Playwright also got a challenge page
+      if (isCloudflareChallenge(html)) {
+        throw new Error('Cloudflare challenge persists even in headless browser');
+      }
+    } catch (err) {
+      console.warn(`[playwright] failed for ${url}: ${err.message}`);
+      return res.status(403).json({
+        error: 'bot_protection',
+        message: 'This site blocks automated access. Please enter the product details manually.',
+        store_name: storeFromUrl(url),
+        _debug: { blocked: true, reason: 'cloudflare', playwrightError: err.message },
+      });
+    }
+  }
+
+  // Step 3: extract product data from the HTML (with LLM fallback)
+  const result = await extractProductData(html, url);
+  res.json(result);
 });
 
 app.get('/health', (_req, res) => res.json({ ok: true }));

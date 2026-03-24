@@ -8,6 +8,7 @@ A universal product wishlist app — save items from any store, track prices and
 - **Styling**: Tailwind CSS
 - **Backend/Auth/DB**: Supabase (PostgreSQL + Auth + Edge Functions)
 - **Icons**: Lucide React
+- **Scraping**: Node.js proxy (`server/proxy.js`) with Playwright/Chromium headless browser fallback for bot-protected sites, plus OpenAI LLM fallback for hard-to-parse pages
 
 ## Project Structure
 

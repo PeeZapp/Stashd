@@ -5,7 +5,7 @@ integrations = ["github:1.0.0", "javascript_openai_ai_integrations:2.0.0"]
 
 [nix]
 channel = "stable-25_05"
-packages = ["unzip"]
+packages = ["unzip", "chromium", "nss", "cups", "alsa-lib", "atk", "cairo", "gdk-pixbuf", "gtk3", "pango", "xorg.libX11", "xorg.libXcomposite", "xorg.libXdamage", "xorg.libXext", "xorg.libXfixes", "xorg.libXrandr", "xorg.libxcb"]
 
 [userenv]
 
