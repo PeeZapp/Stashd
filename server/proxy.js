@@ -120,9 +120,9 @@ async function scrapeWithPlaywright(url) {
   const page = await context.newPage();
 
   try {
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
-    // Give JS-heavy pages extra time to render product data
-    await page.waitForTimeout(3000);
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 17000 });
+    // Give JS-heavy pages a moment to render product data
+    await page.waitForTimeout(1500);
     const html = await page.content();
     await context.close();
     return html;
@@ -517,7 +517,7 @@ async function extractProductData(html, url) {
 
 // ── Scrape endpoint ─────────────────────────────────────────
 
-const PLAYWRIGHT_TIMEOUT_MS = 25000;
+const PLAYWRIGHT_TIMEOUT_MS = 20000;
 
 app.get('/scrape', async (req, res) => {
   const { url } = req.query;
