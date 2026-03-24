@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { X, ExternalLink, Share2, Trash2, Check, ShoppingBag, RefreshCw, Info } from 'lucide-react';
+import { X, ExternalLink, Share2, Trash2, Check, ShoppingBag, RefreshCw, Info, TrendingDown, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { refreshProduct } from '../lib/refreshProduct';
 import { useAuth } from '../contexts/AuthContext';
@@ -25,6 +25,12 @@ export default function ProductDetailModal({
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshMsg, setRefreshMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  type CheaperResult = { store: string; price: number; title: string; url: string | null; savings: number | null };
+  const [cheaperResults, setCheaperResults] = useState<CheaperResult[] | null>(null);
+  const [cheaperLoading, setCheaperLoading] = useState(false);
+  const [cheaperError, setCheaperError] = useState<string | null>(null);
+  const [cheaperOpen, setCheaperOpen] = useState(false);
 
   useEffect(() => {
     loadProductLists();
@@ -93,6 +99,26 @@ export default function ProductDetailModal({
       setRefreshMsg({ type: 'error', text: 'Could not reach the product page. Try again later.' });
     } finally {
       setRefreshing(false);
+    }
+  };
+
+  const handleFindCheaper = async () => {
+    if (!product.title) return;
+    setCheaperLoading(true);
+    setCheaperError(null);
+    setCheaperResults(null);
+    setCheaperOpen(true);
+    try {
+      const params = new URLSearchParams({ title: product.title });
+      if (product.current_price != null) params.set('price', String(product.current_price));
+      const resp = await fetch(`http://localhost:3001/find-cheaper?${params}`);
+      if (!resp.ok) throw new Error(`Server error ${resp.status}`);
+      const data = await resp.json();
+      setCheaperResults(data.results ?? []);
+    } catch (err: unknown) {
+      setCheaperError(err instanceof Error ? err.message : 'Search failed');
+    } finally {
+      setCheaperLoading(false);
     }
   };
 
@@ -254,6 +280,88 @@ export default function ProductDetailModal({
               )}
             </div>
 
+            {/* Find Cheaper panel */}
+            {cheaperOpen && (
+              <div className="mb-4 border rounded-xl overflow-hidden">
+                <button
+                  onClick={() => setCheaperOpen(false)}
+                  className="w-full flex items-center justify-between px-4 py-3 bg-violet-50 text-violet-800 text-sm font-semibold hover:bg-violet-100 transition-colors"
+                >
+                  <span className="flex items-center space-x-2">
+                    <TrendingDown className="w-4 h-4" />
+                    <span>Price Comparison</span>
+                  </span>
+                  <ChevronUp className="w-4 h-4" />
+                </button>
+
+                {/* Disclaimer */}
+                <div className="px-4 py-2 bg-amber-50 border-b border-amber-100 flex items-start space-x-2">
+                  <AlertCircle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0 mt-0.5" />
+                  <p className="text-xs text-amber-700">
+                    Results come from Google Shopping and may not reflect real-time stock or pricing. Prices and availability can vary. Always verify on the retailer's site before purchasing.
+                  </p>
+                </div>
+
+                <div className="divide-y">
+                  {cheaperLoading && (
+                    <div className="px-4 py-6 text-center text-sm text-gray-500">
+                      <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2 text-violet-400" />
+                      Searching for better prices…
+                    </div>
+                  )}
+
+                  {cheaperError && (
+                    <div className="px-4 py-4 text-sm text-red-600">
+                      Could not complete search. Make sure the Scrape proxy is running.
+                    </div>
+                  )}
+
+                  {cheaperResults && cheaperResults.length === 0 && (
+                    <div className="px-4 py-4 text-sm text-gray-500 text-center">
+                      No comparable listings found on Google Shopping right now.
+                    </div>
+                  )}
+
+                  {cheaperResults && cheaperResults.map((r, i) => {
+                    const isCheaper = r.savings !== null && r.savings > 0;
+                    const isMore = r.savings !== null && r.savings < 0;
+                    return (
+                      <div key={i} className="px-4 py-3 flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-gray-800 truncate">{r.store}</p>
+                          <p className="text-xs text-gray-500 truncate">{r.title}</p>
+                          {isCheaper && (
+                            <span className="text-xs text-green-600 font-medium">Save ${r.savings!.toFixed(2)}</span>
+                          )}
+                          {isMore && (
+                            <span className="text-xs text-red-500 font-medium">${Math.abs(r.savings!).toFixed(2)} more</span>
+                          )}
+                        </div>
+                        <div className="flex items-center space-x-3 flex-shrink-0">
+                          <span className={`text-base font-bold ${isCheaper ? 'text-green-700' : isMore ? 'text-red-600' : 'text-gray-800'}`}>
+                            ${r.price.toFixed(2)}
+                          </span>
+                          {r.url ? (
+                            <a
+                              href={r.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-900 text-white hover:bg-gray-700 transition-colors flex items-center space-x-1"
+                            >
+                              <span>View</span>
+                              <ExternalLink className="w-3 h-3" />
+                            </a>
+                          ) : (
+                            <span className="text-xs text-gray-400">No link</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             <div className="mt-auto space-y-3">
               <a
                 href={product.source_url}
@@ -264,6 +372,29 @@ export default function ProductDetailModal({
                 <span>View on {storeName}</span>
                 <ExternalLink className="w-5 h-5" />
               </a>
+
+              <button
+                onClick={cheaperOpen ? () => setCheaperOpen(false) : handleFindCheaper}
+                disabled={cheaperLoading || !product.title}
+                className="w-full px-4 py-3 border border-violet-300 text-violet-700 rounded-lg hover:bg-violet-50 transition-colors flex items-center justify-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {cheaperLoading ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Searching…</span>
+                  </>
+                ) : cheaperOpen ? (
+                  <>
+                    <ChevronUp className="w-4 h-4" />
+                    <span>Hide Comparison</span>
+                  </>
+                ) : (
+                  <>
+                    <TrendingDown className="w-4 h-4" />
+                    <span>Find Cheaper</span>
+                  </>
+                )}
+              </button>
 
               <button
                 onClick={handleRefresh}
