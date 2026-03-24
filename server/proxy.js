@@ -72,11 +72,14 @@ function findChromium() {
 const CHROMIUM_PATH = findChromium();
 
 let _browser = null;
+let _browserLaunchPromise = null;
 
 async function getBrowser() {
   if (_browser && _browser.isConnected()) return _browser;
+  if (_browserLaunchPromise) return _browserLaunchPromise;
   if (!CHROMIUM_PATH) throw new Error('Chromium executable not found');
-  _browser = await chromium.launch({
+  _browser = null;
+  _browserLaunchPromise = chromium.launch({
     executablePath: CHROMIUM_PATH,
     headless: true,
     args: [
@@ -92,9 +95,21 @@ async function getBrowser() {
       '--disable-blink-features=AutomationControlled',
       '--disable-features=IsolateOrigins,site-per-process,UseOzonePlatform',
     ],
+  }).then((bw) => {
+    _browser = bw;
+    _browserLaunchPromise = null;
+    console.log('[playwright] browser launched');
+    bw.on('disconnected', () => {
+      console.warn('[playwright] browser disconnected — will relaunch on next request');
+      _browser = null;
+    });
+    return bw;
+  }).catch((err) => {
+    _browserLaunchPromise = null;
+    _browser = null;
+    throw err;
   });
-  console.log('[playwright] browser launched');
-  return _browser;
+  return _browserLaunchPromise;
 }
 
 async function closeBrowser() {
