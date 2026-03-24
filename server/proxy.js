@@ -84,11 +84,13 @@ async function getBrowser() {
       '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
       '--disable-gpu',
+      '--disable-gpu-compositing',
+      '--disable-software-rasterizer',
+      '--disable-gpu-sandbox',
       '--no-first-run',
       '--no-zygote',
-      '--single-process',
       '--disable-blink-features=AutomationControlled',
-      '--disable-features=IsolateOrigins,site-per-process',
+      '--disable-features=IsolateOrigins,site-per-process,UseOzonePlatform',
     ],
   });
   console.log('[playwright] browser launched');
