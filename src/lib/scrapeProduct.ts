@@ -24,7 +24,7 @@ export function parsePrice(raw: string | number | null | undefined): number | nu
 async function fetchViaProxy(url: string): Promise<ScrapedProduct | null> {
   try {
     const res = await fetch(`/api/scrape?url=${encodeURIComponent(url)}`, {
-      signal: AbortSignal.timeout(18000),
+      signal: AbortSignal.timeout(120000),
     });
     const data = await res.json();
     if (data.error === 'bot_protection') {

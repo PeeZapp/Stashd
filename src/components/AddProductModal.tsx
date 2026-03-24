@@ -47,6 +47,13 @@ export default function AddProductModal({ lists, onClose, onSuccess, prefillUrl 
   const [selectedListIds, setSelectedListIds] = useState<string[]>([]);
   const [newListName, setNewListName] = useState('');
   const [botProtected, setBotProtected] = useState(false);
+  const [fetchSeconds, setFetchSeconds] = useState(0);
+
+  useEffect(() => {
+    if (step !== 'fetching') { setFetchSeconds(0); return; }
+    const interval = setInterval(() => setFetchSeconds((s) => s + 1), 1000);
+    return () => clearInterval(interval);
+  }, [step]);
 
   const update = (field: keyof FormData, value: string | boolean | null) =>
     setFormData((prev) => ({ ...prev, [field]: value }));
@@ -293,9 +300,15 @@ export default function AddProductModal({ lists, onClose, onSuccess, prefillUrl 
         {step === 'fetching' && (
           <div className="flex flex-col items-center justify-center py-16 space-y-4">
             <Loader className="w-10 h-10 text-gray-900 animate-spin" />
-            <p className="text-gray-700 font-medium">Fetching product details…</p>
+            <p className="text-gray-700 font-medium">
+              {fetchSeconds < 8 ? 'Fetching product details…' : fetchSeconds < 20 ? 'Still working…' : 'Almost there…'}
+            </p>
             <p className="text-sm text-gray-400 text-center max-w-xs">
-              Reading product details from the page. This usually takes just a second.
+              {fetchSeconds < 8
+                ? 'Reading product details from the page.'
+                : fetchSeconds < 20
+                ? 'This site may need a moment to load — hang tight.'
+                : 'The browser is warming up for a bot-protected site. This can take up to a minute on first use.'}
             </p>
           </div>
         )}
