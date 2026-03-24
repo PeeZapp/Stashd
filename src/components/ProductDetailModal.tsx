@@ -111,7 +111,7 @@ export default function ProductDetailModal({
     try {
       const params = new URLSearchParams({ title: product.title });
       if (product.current_price != null) params.set('price', String(product.current_price));
-      const resp = await fetch(`http://localhost:3001/find-cheaper?${params}`);
+      const resp = await fetch(`/api/find-cheaper?${params}`);
       if (!resp.ok) throw new Error(`Server error ${resp.status}`);
       const data = await resp.json();
       setCheaperResults(data.results ?? []);
