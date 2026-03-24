@@ -49,6 +49,10 @@ export default function ListCard({ list, onClick, onDelete, onShare, onRename }:
   const itemCount = products.length;
   const totalPrice = products.reduce((sum, p) => sum + (p.current_price ?? 0), 0);
   const hasAnySale = products.some((p) => p.is_on_sale);
+  const totalOriginalPrice = products.reduce(
+    (sum, p) => sum + (p.is_on_sale && p.original_price != null ? p.original_price : (p.current_price ?? 0)),
+    0
+  );
 
   return (
     <div className="bg-white rounded-2xl overflow-hidden border border-gray-200 hover:shadow-lg transition-all duration-200 group cursor-pointer">
@@ -133,18 +137,23 @@ export default function ListCard({ list, onClick, onDelete, onShare, onRename }:
         </div>
 
         {/* Stats row */}
-        <div className="flex items-center space-x-2 text-sm text-gray-500 mb-4">
+        <div className="flex items-center flex-wrap gap-x-2 gap-y-0.5 text-sm text-gray-500 mb-4">
           <span>{itemCount} {itemCount === 1 ? 'item' : 'items'}</span>
           {itemCount > 0 && totalPrice > 0 && (
             <>
               <span>·</span>
-              <span className="font-semibold text-gray-900">${totalPrice.toFixed(2)}</span>
-            </>
-          )}
-          {hasAnySale && (
-            <>
-              <span>·</span>
-              <span className="text-red-600 font-medium">Sale!</span>
+              {hasAnySale && totalOriginalPrice > totalPrice ? (
+                <span className="flex items-baseline space-x-1.5">
+                  <span className="font-medium text-gray-400 line-through">
+                    ${totalOriginalPrice.toFixed(2)}
+                  </span>
+                  <span className="font-semibold text-red-600">
+                    ${totalPrice.toFixed(2)}
+                  </span>
+                </span>
+              ) : (
+                <span className="font-semibold text-gray-900">${totalPrice.toFixed(2)}</span>
+              )}
             </>
           )}
         </div>
