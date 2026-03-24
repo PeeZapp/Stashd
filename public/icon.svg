@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#1A1A1A"/>
+  <g transform="translate(256,256)">
+    <!-- Shopping bag body -->
+    <path d="M-100 -40 L-112 100 Q-114 120 -92 120 L92 120 Q114 120 112 100 L100 -40 Z" fill="#FAF6EF" stroke="none"/>
+    <!-- Bag flap top -->
+    <path d="M-100 -40 L100 -40" stroke="#FAF6EF" stroke-width="0" fill="none"/>
+    <!-- Handle left -->
+    <path d="M-52 -40 Q-52 -120 0 -120 Q52 -120 52 -40" fill="none" stroke="#FAF6EF" stroke-width="22" stroke-linecap="round"/>
+    <!-- S detail on bag -->
+    <text x="0" y="62" text-anchor="middle" font-family="Georgia, serif" font-size="88" font-weight="700" fill="#1A1A1A" letter-spacing="-2">S</text>
+  </g>
+</svg>
