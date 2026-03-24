@@ -62,7 +62,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     const stored = localStorage.getItem('stashd-theme') as ThemeName | null;
     const initial = stored && ['default', 'plum', 'chocolate', 'midnight'].includes(stored)
       ? stored
-      : 'default';
+      : 'midnight';
     applyTheme(initial);
     return initial;
   });
