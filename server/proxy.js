@@ -517,6 +517,8 @@ async function extractProductData(html, url) {
 
 // ── Scrape endpoint ─────────────────────────────────────────
 
+const PLAYWRIGHT_TIMEOUT_MS = 25000;
+
 app.get('/scrape', async (req, res) => {
   const { url } = req.query;
   if (!url || typeof url !== 'string') {
@@ -541,15 +543,23 @@ app.get('/scrape', async (req, res) => {
   }
 
   // Step 2: if Cloudflare challenge detected, retry with headless browser
+  let usedPlaywright = false;
   if (isCloudflareChallenge(html)) {
     console.log(`[bot-protection] Cloudflare detected for ${url} — retrying with Playwright`);
     try {
-      html = await scrapeWithPlaywright(url);
-      console.log(`[playwright] rendered ${html.length} bytes for ${url}`);
-      // Check if Playwright also got a challenge page
-      if (isCloudflareChallenge(html)) {
+      // Enforce overall timeout on the entire Playwright operation
+      const playwrightHtml = await Promise.race([
+        scrapeWithPlaywright(url),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Playwright timed out')), PLAYWRIGHT_TIMEOUT_MS)
+        ),
+      ]);
+      if (isCloudflareChallenge(playwrightHtml)) {
         throw new Error('Cloudflare challenge persists even in headless browser');
       }
+      console.log(`[playwright] rendered ${playwrightHtml.length} bytes for ${url}`);
+      html = playwrightHtml;
+      usedPlaywright = true;
     } catch (err) {
       console.warn(`[playwright] failed for ${url}: ${err.message}`);
       return res.status(403).json({
@@ -563,6 +573,19 @@ app.get('/scrape', async (req, res) => {
 
   // Step 3: extract product data from the HTML (with LLM fallback)
   const result = await extractProductData(html, url);
+
+  // Step 4: if Playwright rendered the page but we still couldn't extract
+  // meaningful product data, fall back to the manual-entry banner
+  if (usedPlaywright && !result.title && !result.image_url) {
+    console.warn(`[playwright] rendered but no product data found for ${url}`);
+    return res.status(403).json({
+      error: 'bot_protection',
+      message: 'This site blocks automated access. Please enter the product details manually.',
+      store_name: storeFromUrl(url),
+      _debug: { blocked: true, reason: 'no_data_after_playwright' },
+    });
+  }
+
   res.json(result);
 });
 
