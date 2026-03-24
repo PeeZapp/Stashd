@@ -136,6 +136,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await supabase.from('lists').delete().eq('user_id', user.id);
       await supabase.from('products').delete().eq('user_id', user.id);
       await supabase.from('profiles').delete().eq('id', user.id);
+
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      if (token) {
+        const res = await fetch('/api/delete-account', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          console.warn('Auth user deletion failed:', body.error);
+        }
+      }
+
       await supabase.auth.signOut();
       return { error: null };
     } catch (err) {
