@@ -55,6 +55,7 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
   };
 
   const loadLists = async () => {
+    if (!user) return;
     const { data, error } = await supabase
       .from('lists')
       .select(`
@@ -63,6 +64,7 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
           products (*)
         )
       `)
+      .eq('user_id', user.id)
       .order('created_at', { ascending: false });
 
     if (error) {

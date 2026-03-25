@@ -117,8 +117,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signOut = async () => {
-    await supabase.auth.signOut();
     setProfile(null);
+    setUser(null);
+    setLoading(false);
+    await Promise.race([
+      supabase.auth.signOut(),
+      new Promise<void>((resolve) => setTimeout(resolve, 5000)),
+    ]);
   };
 
   const deleteAccount = async () => {
