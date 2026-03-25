@@ -726,44 +726,6 @@ app.get(['/proxy-status', '/api/proxy-status'], async (_req, res) => {
   }
 });
 
-app.post('/api/delete-account', async (req, res) => {
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const supabaseUrl = process.env.VITE_SUPABASE_URL;
-  const anonKey = process.env.VITE_SUPABASE_ANON_KEY;
-
-  if (!serviceKey || !supabaseUrl) {
-    return res.status(500).json({ error: 'Account deletion not configured on server — add SUPABASE_SERVICE_ROLE_KEY secret' });
-  }
-
-  const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Missing auth token' });
-  }
-
-  try {
-    const token = authHeader.slice(7);
-    const userRes = await fetch(`${supabaseUrl}/auth/v1/user`, {
-      headers: { Authorization: `Bearer ${token}`, apikey: anonKey || '' },
-    });
-    if (!userRes.ok) return res.status(401).json({ error: 'Invalid token' });
-    const { id: userId } = await userRes.json();
-
-    const deleteRes = await fetch(`${supabaseUrl}/auth/v1/admin/users/${userId}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${serviceKey}`, apikey: serviceKey },
-    });
-
-    if (!deleteRes.ok) {
-      const err = await deleteRes.json().catch(() => ({}));
-      return res.status(deleteRes.status).json({ error: err.message || 'Auth user deletion failed' });
-    }
-
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: String(err) });
-  }
-});
-
 // ── Production: serve built frontend ───────────────────────
 if (isProd) {
   const distPath = join(__dirname, '..', 'dist');

@@ -1,8 +1,13 @@
 import { useState, useEffect } from 'react';
 import { X, Plus, AlertCircle, Loader, ExternalLink, ChevronLeft, DollarSign, Info } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { supabase } from '../lib/supabase';
 import { scrapeProduct } from '../lib/scrapeProduct';
+import {
+  addProductToLists,
+  createList,
+  createProduct,
+  getUserLists,
+} from '../lib/firestore';
 import type { List } from '../lib/types';
 
 interface AddProductModalProps {
@@ -129,12 +134,8 @@ export default function AddProductModal({ lists, onClose, onSuccess, prefillUrl 
       const isOnSale =
         currentPrice !== null && originalPrice !== null && originalPrice > currentPrice;
 
-      // Build insert payload — only include columns confirmed to exist.
-      // New columns (sku, price_source) require the migration in
-      // supabase/migrations/20260323000002_add_sku_and_price_source.sql to be run first.
-      // We try with the full payload and gracefully retry without extended columns on error.
-      const basePayload = {
-        user_id: user.id,
+      const product = await createProduct({
+        user_id: user.uid,
         title: formData.title.trim(),
         source_url: formData.sourceUrl.trim(),
         current_price: currentPrice,
@@ -143,35 +144,10 @@ export default function AddProductModal({ lists, onClose, onSuccess, prefillUrl 
         image_url: formData.imageUrl.trim() || null,
         store_name: formData.storeName.trim() || null,
         description: formData.description.trim() || null,
-      };
-
-      const extendedPayload = {
-        ...basePayload,
         sku: formData.sku.trim() || null,
         price_source: formData.priceSource,
-      };
-
-      let productInsert = await supabase
-        .from('products')
-        .insert(extendedPayload)
-        .select()
-        .single();
-
-      // If extended columns don't exist yet (migration not run), retry with base payload
-      if (
-        productInsert.error &&
-        (productInsert.error.message.includes('column') ||
-          productInsert.error.code === 'PGRST204')
-      ) {
-        productInsert = await supabase
-          .from('products')
-          .insert(basePayload)
-          .select()
-          .single();
-      }
-
-      const { data: product, error: productError } = productInsert;
-      if (productError) throw productError;
+        is_owned: false,
+      });
 
       let allListIds = [...selectedListIds];
 
@@ -180,42 +156,37 @@ export default function AddProductModal({ lists, onClose, onSuccess, prefillUrl 
         ...(newListName.trim() ? [newListName.trim()] : []),
       ];
       for (const name of listsToCreate) {
-        const { data: newList, error: listError } = await supabase
-          .from('lists')
-          .insert({ user_id: user.id, name, share_token: crypto.randomUUID() })
-          .select()
-          .single();
-        if (listError) throw listError;
-        if (newList) allListIds = [...allListIds, newList.id];
+        const newList = await createList({
+          user_id: user.uid,
+          name,
+          share_token: crypto.randomUUID(),
+        });
+        allListIds = [...allListIds, newList.id];
       }
 
       // If still no list selected, use or create an "Uncategorised" list
       if (allListIds.length === 0 && product) {
-        const { data: existing } = await supabase
-          .from('lists')
-          .select('id')
-          .eq('user_id', user.id)
-          .eq('name', 'Uncategorised')
-          .maybeSingle();
+        const existingLists = await getUserLists(user.uid);
+        const existing = existingLists.find((list) => list.name === 'Uncategorised');
 
         if (existing) {
           allListIds = [existing.id];
         } else {
-          const { data: created, error: createError } = await supabase
-            .from('lists')
-            .insert({ user_id: user.id, name: 'Uncategorised', share_token: crypto.randomUUID() })
-            .select()
-            .single();
-          if (createError) throw createError;
-          if (created) allListIds = [created.id];
+          const created = await createList({
+            user_id: user.uid,
+            name: 'Uncategorised',
+            share_token: crypto.randomUUID(),
+          });
+          allListIds = [created.id];
         }
       }
 
       if (allListIds.length > 0 && product) {
-        const { error: lpError } = await supabase
-          .from('list_products')
-          .insert(allListIds.map((list_id) => ({ list_id, product_id: product.id })));
-        if (lpError) throw lpError;
+        await addProductToLists({
+          user_id: user.uid,
+          list_ids: allListIds,
+          product_id: product.id,
+        });
       }
 
       onSuccess();

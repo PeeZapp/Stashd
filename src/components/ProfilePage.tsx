@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { ArrowLeft, User, Palette, Trash2, AlertCircle, Check, ShoppingBag } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { supabase } from '../lib/supabase';
+import { updateProfileName } from '../lib/firestore';
 import { useTheme, THEMES } from '../contexts/ThemeContext';
 
 interface ProfilePageProps {
@@ -26,10 +26,12 @@ export default function ProfilePage({ onBack }: ProfilePageProps) {
     if (!user || !username.trim()) return;
     setSavingUsername(true);
     setUsernameMsg(null);
-    const { error } = await supabase
-      .from('profiles')
-      .update({ name: username.trim() })
-      .eq('id', user.id);
+    let error: Error | null = null;
+    try {
+      await updateProfileName(user.uid, username.trim());
+    } catch (err) {
+      error = err as Error;
+    }
     setSavingUsername(false);
     if (error) {
       setUsernameMsg({ type: 'error', text: 'Could not save. Please try again.' });

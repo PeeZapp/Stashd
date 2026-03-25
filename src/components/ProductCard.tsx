@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { ExternalLink, Trash2, ShoppingBag, Pencil, Info, Check, CheckSquare2 } from 'lucide-react';
-import { supabase } from '../lib/supabase';
 import type { Product } from '../lib/types';
+import { updateProduct } from '../lib/firestore';
 
 interface ProductCardProps {
   product: Product;
@@ -60,14 +60,13 @@ export default function ProductCard({
       const isOnSale =
         num !== null && product.original_price !== null && product.original_price > num;
 
-      const { data } = await supabase
-        .from('products')
-        .update({ current_price: num, is_on_sale: isOnSale, price_source: 'manual' })
-        .eq('id', product.id)
-        .select()
-        .single();
+      const data = await updateProduct(product.id, {
+        current_price: num,
+        is_on_sale: isOnSale,
+        price_source: 'manual',
+      });
 
-      if (data && onPriceUpdate) onPriceUpdate(data as Product);
+      if (data && onPriceUpdate) onPriceUpdate(data);
     } catch {
       // silently ignore
     } finally {
@@ -89,19 +88,15 @@ export default function ProductCard({
     setMarkingOwned(true);
     setOwnedError(false);
     const newVal = !isOwned;
-    const { data, error } = await supabase
-      .from('products')
-      .update({ is_owned: newVal } as Record<string, unknown>)
-      .eq('id', product.id)
-      .select()
-      .single();
-    setMarkingOwned(false);
-    if (error) {
+    try {
+      const data = await updateProduct(product.id, { is_owned: newVal });
+      if (data && onMarkOwned) onMarkOwned(data);
+    } catch {
       setOwnedError(true);
       setTimeout(() => setOwnedError(false), 6000);
-      return;
+    } finally {
+      setMarkingOwned(false);
     }
-    if (data && onMarkOwned) onMarkOwned(data as Product);
   };
 
   const handleCardClick = () => {
@@ -325,7 +320,7 @@ export default function ProductCard({
                 {markingOwned
                   ? '…'
                   : ownedError
-                    ? 'Run the SQL migration in Supabase first'
+                    ? 'Could not update item ownership'
                     : isOwned
                       ? 'Owned — undo?'
                       : 'I bought this'}

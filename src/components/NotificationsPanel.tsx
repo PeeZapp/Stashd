@@ -1,6 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
 import { Bell, TrendingDown, Tag, X } from 'lucide-react';
-import { supabase } from '../lib/supabase';
+import {
+  deleteNotification,
+  deleteNotifications,
+  markNotificationsRead,
+  subscribeToNotifications,
+} from '../lib/firestore';
 import type { Notification } from '../lib/types';
 
 interface NotificationsPanelProps {
@@ -37,7 +42,10 @@ export default function NotificationsPanel({ userId }: NotificationsPanelProps) 
   const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    loadNotifications();
+    const unsubscribe = subscribeToNotifications(userId, (nextNotifications) => {
+      setNotifications(nextNotifications);
+    });
+    return () => unsubscribe();
   }, [userId]);
 
   useEffect(() => {
@@ -50,28 +58,24 @@ export default function NotificationsPanel({ userId }: NotificationsPanelProps) 
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  const loadNotifications = async () => {
-    const { data } = await supabase
-      .from('notifications')
-      .select('*')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false })
-      .limit(30);
-    if (data) setNotifications(data as unknown as Notification[]);
-  };
-
   const unreadCount = notifications.filter((n) => !n.is_read).length;
 
   const markAllRead = async () => {
     const unreadIds = notifications.filter((n) => !n.is_read).map((n) => n.id);
     if (unreadIds.length === 0) return;
-    await supabase.from('notifications').update({ is_read: true }).in('id', unreadIds);
+    await markNotificationsRead(unreadIds);
     setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
   };
 
   const dismiss = async (id: string) => {
-    await supabase.from('notifications').delete().eq('id', id);
+    await deleteNotification(id);
     setNotifications((prev) => prev.filter((n) => n.id !== id));
+  };
+
+  const dismissAll = async () => {
+    const ids = notifications.map((n) => n.id);
+    await deleteNotifications(ids);
+    setNotifications([]);
   };
 
   const handleOpen = () => {
@@ -100,9 +104,7 @@ export default function NotificationsPanel({ userId }: NotificationsPanelProps) 
             <h3 className="font-semibold text-gray-900 text-sm">Alerts</h3>
             {notifications.length > 0 && (
               <button
-                onClick={() => {
-                  notifications.forEach((n) => dismiss(n.id));
-                }}
+                onClick={dismissAll}
                 className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
               >
                 Clear all

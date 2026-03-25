@@ -1,6 +1,17 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
-import { User } from '@supabase/supabase-js';
-import { supabase } from '../lib/supabase';
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import {
+  GoogleAuthProvider,
+  createUserWithEmailAndPassword,
+  deleteUser,
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  signOut as firebaseSignOut,
+  updateProfile as firebaseUpdateProfile,
+  type User,
+} from 'firebase/auth';
+import { auth } from '../lib/firebase';
+import { deleteAllUserData, getProfile, upsertProfile } from '../lib/firestore';
 import type { Profile } from '../lib/types';
 
 interface AuthContextType {
@@ -32,15 +43,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const init = async () => {
       try {
-        const sessionResult = await Promise.race([
-          supabase.auth.getSession(),
+        const currentUser = await Promise.race([
+          Promise.resolve(auth.currentUser),
           new Promise<null>((resolve) => setTimeout(() => resolve(null), 8000)),
         ]);
         if (cancelled) return;
-        const session = sessionResult ? sessionResult.data.session : null;
-        setUser(session?.user ?? null);
-        if (session?.user) {
-          await loadProfile(session.user.id);
+        setUser(currentUser ?? null);
+        if (currentUser) {
+          await loadProfile(currentUser.uid, currentUser);
         } else {
           setLoading(false);
         }
@@ -51,12 +61,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     init();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const unsubscribe = onAuthStateChanged(auth, (nextUser) => {
       if (cancelled) return;
       (async () => {
-        setUser(session?.user ?? null);
-        if (session?.user) {
-          await loadProfile(session.user.id);
+        setUser(nextUser);
+        if (nextUser) {
+          await loadProfile(nextUser.uid, nextUser);
         } else {
           setProfile(null);
           setLoading(false);
@@ -67,21 +77,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
       clearTimeout(safetyTimer);
-      subscription.unsubscribe();
+      unsubscribe();
     };
   }, []);
 
-  const loadProfile = async (userId: string) => {
+  const loadProfile = async (userId: string, authUser?: User | null) => {
     const timeout = new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error('Profile load timed out')), 8000)
     );
     try {
-      const { data, error } = await Promise.race([
-        supabase.from('profiles').select('*').eq('id', userId).maybeSingle(),
+      const existingProfile = await Promise.race([
+        getProfile(userId),
         timeout,
       ]);
-      if (error) throw error;
-      setProfile(data);
+
+      if (existingProfile) {
+        setProfile(existingProfile);
+      } else if (authUser) {
+        const fallbackName =
+          authUser.displayName?.trim() ||
+          authUser.email?.split('@')[0] ||
+          'User';
+        await upsertProfile({
+          id: userId,
+          email: authUser.email ?? '',
+          name: fallbackName,
+        });
+        const created = await getProfile(userId);
+        setProfile(created);
+      } else {
+        setProfile(null);
+      }
     } catch (error) {
       console.error('Error loading profile:', error);
     } finally {
@@ -90,13 +116,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const refreshProfile = async () => {
-    if (user) await loadProfile(user.id);
+    if (user) await loadProfile(user.uid, user);
   };
 
   const signIn = async (email: string, password: string) => {
     try {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      return { error };
+      await signInWithEmailAndPassword(auth, email, password);
+      return { error: null };
     } catch (error) {
       return { error: error as Error };
     }
@@ -104,22 +130,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signUp = async (email: string, password: string, username: string) => {
     try {
-      const { data, error: signUpError } = await supabase.auth.signUp({
-        email,
-        password,
-        options: { data: { name: username } },
-      });
-
-      if (signUpError) return { error: signUpError };
-      if (!data.user) return { error: new Error('No user returned') };
-
-      if (data.session) {
-        const { error: profileError } = await supabase
-          .from('profiles')
-          .upsert({ id: data.user.id, email, name: username }, { onConflict: 'id' });
-
-        if (profileError) console.warn('Profile upsert failed:', profileError);
+      const credential = await createUserWithEmailAndPassword(auth, email, password);
+      if (username.trim()) {
+        await firebaseUpdateProfile(credential.user, { displayName: username.trim() });
       }
+      await upsertProfile({
+        id: credential.user.uid,
+        email: credential.user.email ?? email,
+        name: username.trim(),
+      });
 
       return { error: null };
     } catch (error) {
@@ -129,13 +148,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signInWithGoogle = async () => {
     try {
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: {
-          redirectTo: window.location.origin,
-        },
+      const provider = new GoogleAuthProvider();
+      const credential = await signInWithPopup(auth, provider);
+      const fallbackName =
+        credential.user.displayName?.trim() ||
+        credential.user.email?.split('@')[0] ||
+        'User';
+      await upsertProfile({
+        id: credential.user.uid,
+        email: credential.user.email ?? '',
+        name: fallbackName,
       });
-      return { error };
+      return { error: null };
     } catch (error) {
       return { error: error as Error };
     }
@@ -146,42 +170,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
     setLoading(false);
     await Promise.race([
-      supabase.auth.signOut(),
+      firebaseSignOut(auth),
       new Promise<void>((resolve) => setTimeout(resolve, 5000)),
     ]);
   };
 
   const deleteAccount = async () => {
-    if (!user) return { error: new Error('Not signed in') };
+    if (!user || !auth.currentUser) return { error: new Error('Not signed in') };
     try {
-      await supabase.from('notifications').delete().eq('user_id', user.id);
-      const { data: lists } = await supabase
-        .from('lists')
-        .select('id')
-        .eq('user_id', user.id);
-      if (lists) {
-        for (const list of lists) {
-          await supabase.from('list_products').delete().eq('list_id', list.id);
-        }
-      }
-      await supabase.from('lists').delete().eq('user_id', user.id);
-      await supabase.from('products').delete().eq('user_id', user.id);
-      await supabase.from('profiles').delete().eq('id', user.id);
-
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData.session?.access_token;
-      if (token) {
-        const res = await fetch('/api/delete-account', {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          console.warn('Auth user deletion failed:', body.error);
-        }
-      }
-
-      await supabase.auth.signOut();
+      await deleteAllUserData(user.uid);
+      await deleteUser(auth.currentUser);
+      await firebaseSignOut(auth);
       return { error: null };
     } catch (err) {
       return { error: err as Error };

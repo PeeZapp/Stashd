@@ -12,9 +12,9 @@
     "typecheck": "tsc --noEmit -p tsconfig.app.json"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.57.4",
     "drizzle-zod": "^0.8.3",
     "express": "^5.2.1",
+    "firebase": "^12.11.0",
     "lucide-react": "^0.344.0",
     "openai": "^6.32.0",
     "p-limit": "^7.3.0",

@@ -3,9 +3,15 @@ import { Plus, ShoppingBag, LogOut, ArrowLeft, Share2, RefreshCw, Info, GitCompa
 import { usePlaywrightStatus } from '../hooks/usePlaywrightStatus';
 import { useProxyStatus } from '../hooks/useProxyStatus';
 import { useAuth } from '../contexts/AuthContext';
-import { supabase } from '../lib/supabase';
 import { refreshProduct } from '../lib/refreshProduct';
 import type { Product, List } from '../lib/types';
+import {
+  createList,
+  deleteList,
+  deleteProduct,
+  getUserListsWithProducts,
+  updateList,
+} from '../lib/firestore';
 import ProductCard from './ProductCard';
 import AddProductModal from './AddProductModal';
 import ProductDetailModal from './ProductDetailModal';
@@ -58,39 +64,14 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
 
   const loadLists = async () => {
     if (!user) return;
-    const { data, error } = await supabase
-      .from('lists')
-      .select(`
-        *,
-        list_products (
-          products (*)
-        )
-      `)
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false });
-
-    if (error) {
+    try {
+      const data = await getUserListsWithProducts(user.uid);
+      setListsWithProducts(data);
+      setAllLists(data.map(({ products: _p, ...l }) => l as List));
+    } catch (error) {
       console.error('Error loading lists:', error);
       return;
     }
-
-    const normalized: ListWithProducts[] = (data || []).map((list) => {
-      const rawList = list as unknown as Record<string, unknown>;
-      const listProducts = (rawList.list_products as Array<{ products: Product | null }>) || [];
-      return {
-        id: rawList.id as string,
-        user_id: rawList.user_id as string,
-        name: rawList.name as string,
-        is_shared: rawList.is_shared as boolean,
-        share_token: rawList.share_token as string | null,
-        created_at: rawList.created_at as string,
-        updated_at: rawList.updated_at as string,
-        products: listProducts.map((lp) => lp.products).filter(Boolean) as Product[],
-      };
-    });
-
-    setListsWithProducts(normalized);
-    setAllLists(normalized.map(({ products: _p, ...l }) => l as List));
   };
 
   const handleProductAdded = () => {
@@ -100,15 +81,23 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
 
   const handleDeleteProduct = async (productId: string) => {
     if (!confirm('Are you sure you want to delete this product?')) return;
-    const { error } = await supabase.from('products').delete().eq('id', productId);
-    if (error) { console.error(error); return; }
+    try {
+      await deleteProduct(productId);
+    } catch (error) {
+      console.error(error);
+      return;
+    }
     await loadData();
   };
 
   const handleDeleteList = async (listId: string) => {
     if (!confirm('Are you sure you want to delete this list?')) return;
-    const { error } = await supabase.from('lists').delete().eq('id', listId);
-    if (error) { console.error(error); return; }
+    try {
+      await deleteList(listId);
+    } catch (error) {
+      console.error(error);
+      return;
+    }
     if (view.type === 'list-detail' && view.listId === listId) {
       setView({ type: 'lists' });
     }
@@ -116,8 +105,12 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
   };
 
   const handleRenameList = async (listId: string, newName: string) => {
-    const { error } = await supabase.from('lists').update({ name: newName }).eq('id', listId);
-    if (error) { console.error(error); return; }
+    try {
+      await updateList(listId, { name: newName });
+    } catch (error) {
+      console.error(error);
+      return;
+    }
     await loadData();
   };
 
@@ -125,11 +118,12 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
     let token = list.share_token;
     if (!list.is_shared || !token) {
       token = token ?? crypto.randomUUID();
-      const { error } = await supabase
-        .from('lists')
-        .update({ is_shared: true, share_token: token })
-        .eq('id', list.id);
-      if (error) { console.error(error); return; }
+      try {
+        await updateList(list.id, { is_shared: true, share_token: token });
+      } catch (error) {
+        console.error(error);
+        return;
+      }
       await loadData();
     }
     const shareUrl = `${window.location.origin}/share/list/${token}`;
@@ -141,12 +135,13 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
     e.preventDefault();
     if (!newListName.trim() || !user) return;
     setCreateListError('');
-    const { error } = await supabase.from('lists').insert({
-      user_id: user.id,
-      name: newListName.trim(),
-      share_token: crypto.randomUUID(),
-    });
-    if (error) {
+    try {
+      await createList({
+        user_id: user.uid,
+        name: newListName.trim(),
+        share_token: crypto.randomUUID(),
+      });
+    } catch (error) {
       console.error(error);
       setCreateListError('Could not create list. Please try again.');
       return;
@@ -183,7 +178,7 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
     for (let i = 0; i < allProducts.length; i++) {
       setRefreshAllStatus(`Checking ${i + 1} of ${allProducts.length}…`);
       try {
-        const result = await refreshProduct(allProducts[i], user.id);
+        const result = await refreshProduct(allProducts[i], user.uid);
         if (result.updated) updated++;
       } catch {
         // skip failed products silently
@@ -321,7 +316,7 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
               <Plus className="w-5 h-5" />
               <span className="hidden sm:inline">Add Product</span>
             </button>
-            {user && <NotificationsPanel userId={user.id} />}
+            {user && <NotificationsPanel userId={user.uid} />}
             {onNavigateToProfile && (
               <button
                 onClick={onNavigateToProfile}

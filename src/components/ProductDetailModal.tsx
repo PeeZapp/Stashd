@@ -1,9 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import { X, ExternalLink, Share2, Trash2, Check, ShoppingBag, RefreshCw, Info } from 'lucide-react';
-import { supabase } from '../lib/supabase';
 import { refreshProduct } from '../lib/refreshProduct';
 import { useAuth } from '../contexts/AuthContext';
 import type { Product, List } from '../lib/types';
+import {
+  addProductToList,
+  getProductListRows,
+  removeProductFromList,
+} from '../lib/firestore';
 
 interface ProductDetailModalProps {
   product: Product;
@@ -40,32 +44,42 @@ export default function ProductDetailModal({
   }, [handleEsc]);
 
   const loadProductLists = async () => {
-    const { data, error } = await supabase
-      .from('list_products')
-      .select('list_id')
-      .eq('product_id', product.id);
-
-    if (error) { console.error(error); return; }
-    setProductLists(data?.map((lp) => lp.list_id) || []);
-    setLoading(false);
+    try {
+      const rows = await getProductListRows(product.id);
+      setProductLists(rows.map((row) => row.list_id));
+    } catch (error) {
+      console.error(error);
+      return;
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleToggleList = async (listId: string) => {
     const isInList = productLists.includes(listId);
 
     if (isInList) {
-      const { error } = await supabase
-        .from('list_products')
-        .delete()
-        .eq('list_id', listId)
-        .eq('product_id', product.id);
-      if (error) { console.error(error); return; }
+      try {
+        await removeProductFromList({
+          list_id: listId,
+          product_id: product.id,
+        });
+      } catch (error) {
+        console.error(error);
+        return;
+      }
       setProductLists((prev) => prev.filter((id) => id !== listId));
     } else {
-      const { error } = await supabase
-        .from('list_products')
-        .insert({ list_id: listId, product_id: product.id });
-      if (error) { console.error(error); return; }
+      try {
+        await addProductToList({
+          user_id: product.user_id,
+          list_id: listId,
+          product_id: product.id,
+        });
+      } catch (error) {
+        console.error(error);
+        return;
+      }
       setProductLists((prev) => [...prev, listId]);
     }
     onUpdate();
@@ -82,7 +96,7 @@ export default function ProductDetailModal({
     setRefreshing(true);
     setRefreshMsg(null);
     try {
-      const result = await refreshProduct(product, user.id);
+      const result = await refreshProduct(product, user.uid);
       if (result.updated && result.changes.length > 0) {
         setRefreshMsg({ type: 'success', text: result.changes.join(' · ') });
         onUpdate();

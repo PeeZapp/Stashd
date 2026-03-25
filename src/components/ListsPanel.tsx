@@ -1,7 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
 import { X, Plus, Trash2, Share2, ExternalLink, Pencil, Check } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { supabase } from '../lib/supabase';
+import {
+  createList,
+  deleteList,
+  getListProductRows,
+  getProductsByIds,
+  updateList,
+} from '../lib/firestore';
 import type { List, Product } from '../lib/types';
 
 interface ListsPanelProps {
@@ -33,50 +39,59 @@ export default function ListsPanel({ lists, onClose, onListsChanged }: ListsPane
 
   const loadListProducts = async (listId: string) => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from('list_products')
-      .select('product_id, products(*)')
-      .eq('list_id', listId);
-
-    if (error) { console.error(error); setLoading(false); return; }
-    setListProducts(data?.map((lp: { products: Product }) => lp.products) || []);
-    setLoading(false);
+    try {
+      const rows = await getListProductRows(listId);
+      const products = await getProductsByIds(rows.map((row) => row.product_id));
+      setListProducts(products);
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleCreateList = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newListName.trim() || !user) return;
 
-    const { error } = await supabase.from('lists').insert({
-      user_id: user.id,
-      name: newListName.trim(),
-      share_token: crypto.randomUUID(),
-    });
-
-    if (error) { console.error(error); return; }
+    try {
+      await createList({
+        user_id: user.uid,
+        name: newListName.trim(),
+        share_token: crypto.randomUUID(),
+      });
+    } catch (error) {
+      console.error(error);
+      return;
+    }
     setNewListName('');
     onListsChanged();
   };
 
   const handleDeleteList = async (listId: string) => {
     if (!confirm('Are you sure you want to delete this list?')) return;
-    const { error } = await supabase.from('lists').delete().eq('id', listId);
-    if (error) { console.error(error); return; }
+    try {
+      await deleteList(listId);
+    } catch (error) {
+      console.error(error);
+      return;
+    }
     if (selectedList === listId) setSelectedList(null);
     onListsChanged();
   };
 
   const handleShareList = async (list: List) => {
+    let token = list.share_token;
     if (!list.is_shared) {
-      const shareToken = list.share_token ?? crypto.randomUUID();
-      const { error } = await supabase
-        .from('lists')
-        .update({ is_shared: true, share_token: shareToken })
-        .eq('id', list.id);
-      if (error) { console.error(error); return; }
+      token = token ?? crypto.randomUUID();
+      try {
+        await updateList(list.id, { is_shared: true, share_token: token });
+      } catch (error) {
+        console.error(error);
+        return;
+      }
       onListsChanged();
     }
-    const token = list.share_token;
     if (!token) return;
     const shareUrl = `${window.location.origin}/share/list/${token}`;
     navigator.clipboard.writeText(shareUrl);
@@ -94,12 +109,11 @@ export default function ListsPanel({ lists, onClose, onListsChanged }: ListsPane
     const original = lists.find((l) => l.id === editingListId)?.name;
     if (!trimmed || trimmed === original) { setEditingListId(null); return; }
 
-    const { error } = await supabase
-      .from('lists')
-      .update({ name: trimmed })
-      .eq('id', editingListId);
-
-    if (error) { console.error(error); }
+    try {
+      await updateList(editingListId, { name: trimmed });
+    } catch (error) {
+      console.error(error);
+    }
     setEditingListId(null);
     onListsChanged();
   };

@@ -6,7 +6,7 @@ A universal product wishlist app — save items from any store, track prices and
 
 - **Frontend**: React 18 + TypeScript + Vite
 - **Styling**: Tailwind CSS + CSS custom properties for theming
-- **Backend/Auth/DB**: Supabase (PostgreSQL + Auth)
+- **Backend/Auth/DB**: Firebase Auth + Firestore
 - **Icons**: Lucide React
 - **Scraping**: Node.js proxy (`server/proxy.js`) with Playwright/Chromium headless browser fallback for bot-protected sites, plus OpenAI LLM fallback for hard-to-parse pages
 
@@ -33,10 +33,11 @@ src/
     BookmarkletModal.tsx - Browser bookmarklet helper
     NotificationsPanel.tsx - Price drop notifications
   contexts/
-    AuthContext.tsx     - Supabase auth: signIn, signUp, signInWithGoogle, signOut, deleteAccount, refreshProfile
+    AuthContext.tsx     - Firebase auth: signIn, signUp, signInWithGoogle, signOut, deleteAccount, refreshProfile
     ThemeContext.tsx    - 4 colour themes (Charcoal/Plum Noir/Quiet Luxury/Midnight Classic), localStorage persisted
   lib/
-    supabase.ts         - Supabase client
+    firebase.ts         - Firebase app + Auth + Firestore client
+    firestore.ts        - Firestore data access helpers
     types.ts            - TypeScript types
     refreshProduct.ts   - Re-scrape logic for price refresh
 server/
@@ -53,8 +54,12 @@ server/
 
 ## Environment Variables
 
-- `VITE_SUPABASE_URL` - Supabase project URL
-- `VITE_SUPABASE_ANON_KEY` - Supabase anonymous/public key
+- `VITE_FIREBASE_API_KEY` - Firebase web API key
+- `VITE_FIREBASE_AUTH_DOMAIN` - Firebase auth domain
+- `VITE_FIREBASE_PROJECT_ID` - Firebase project ID
+- `VITE_FIREBASE_STORAGE_BUCKET` - Firebase storage bucket
+- `VITE_FIREBASE_MESSAGING_SENDER_ID` - Firebase sender ID
+- `VITE_FIREBASE_APP_ID` - Firebase app ID
 - `AI_INTEGRATIONS_OPENAI_API_KEY` / `AI_INTEGRATIONS_OPENAI_BASE_URL` - OpenAI via Replit integration
 
 ## Development
@@ -75,7 +80,5 @@ Production mode: `npm run build && npm start`
 
 ## Notes
 
-- Username = `profiles.name` column — no separate `username` column needed
-- Google OAuth requires Google provider enabled in Supabase dashboard
-- `is_owned` column on products table exists (migration confirmed by user)
-- ~22 pre-existing TS type inference warnings from Supabase v2 — app functions correctly
+- Username is stored in Firestore `profiles` documents
+- Google OAuth requires Google provider enabled in Firebase Auth
