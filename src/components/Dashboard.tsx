@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
-import { Plus, ShoppingBag, LogOut, ArrowLeft, Share2, RefreshCw, Info, GitCompare, Bookmark, X, User } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Plus, ShoppingBag, LogOut, ArrowLeft, Share2, RefreshCw, Info, GitCompare, Bookmark, X, User, Zap } from 'lucide-react';
+import { usePlaywrightStatus } from '../hooks/usePlaywrightStatus';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { refreshProduct } from '../lib/refreshProduct';
@@ -32,6 +33,19 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
   const [creatingList, setCreatingList] = useState(false);
   const [newListName, setNewListName] = useState('');
   const [createListError, setCreateListError] = useState('');
+  const playwrightStatus = usePlaywrightStatus();
+  const [showReadyFlash, setShowReadyFlash] = useState(false);
+  const prevPlaywrightStatus = useRef(playwrightStatus);
+
+  useEffect(() => {
+    if (prevPlaywrightStatus.current === 'launching' && playwrightStatus === 'ready') {
+      setShowReadyFlash(true);
+      const t = setTimeout(() => setShowReadyFlash(false), 6000);
+      prevPlaywrightStatus.current = playwrightStatus;
+      return () => clearTimeout(t);
+    }
+    prevPlaywrightStatus.current = playwrightStatus;
+  }, [playwrightStatus]);
   const [refreshingAll, setRefreshingAll] = useState(false);
   const [refreshAllStatus, setRefreshAllStatus] = useState<string | null>(null);
   const [showRefreshInfo, setShowRefreshInfo] = useState(false);
@@ -264,6 +278,18 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
           </div>
 
           <div className="flex items-center space-x-2">
+            {playwrightStatus === 'launching' && (
+              <span className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 border border-amber-200 text-amber-700 rounded-full text-xs font-medium">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                Browser warming up…
+              </span>
+            )}
+            {showReadyFlash && (
+              <span className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-50 border border-green-200 text-green-700 rounded-full text-xs font-medium">
+                <Zap className="w-3 h-3" />
+                Browser ready
+              </span>
+            )}
             <button
               onClick={() => setShowBookmarklet(true)}
               className="hidden sm:flex items-center space-x-1.5 px-3 py-2 border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors text-sm"

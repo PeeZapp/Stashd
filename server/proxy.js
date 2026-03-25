@@ -618,6 +618,13 @@ app.get(['/scrape', '/api/scrape'], async (req, res) => {
 
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
+app.get(['/playwright-status', '/api/playwright-status'], (_req, res) => {
+  res.json({
+    ready: !!(_browser && _browser.isConnected()),
+    launching: !!_browserLaunchPromise,
+  });
+});
+
 app.post('/api/delete-account', async (req, res) => {
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   const supabaseUrl = process.env.VITE_SUPABASE_URL;
