@@ -351,14 +351,24 @@ function storeFromUrl(url) {
   }
 }
 
-function isCloudflareChallenge(html) {
+function isBotProtected(html, httpStatus) {
+  if (httpStatus === 403 || httpStatus === 401 || httpStatus === 503) return true;
   return (
+    // Cloudflare
     html.includes('<title>Just a moment...</title>') ||
     html.includes('cf-browser-verification') ||
     html.includes('cf_chl_') ||
     html.includes('Checking your browser before accessing') ||
     html.includes('Enable JavaScript and cookies to continue') ||
-    html.includes('challenge-platform')
+    html.includes('challenge-platform') ||
+    // Akamai / EdgeSuite
+    html.includes('edgesuite.net') ||
+    html.includes('Reference&#32;&#35;') ||
+    (html.includes('Access Denied') && html.includes('permission to access')) ||
+    // Generic
+    html.includes('robot') ||
+    html.includes('captcha') ||
+    html.includes('CAPTCHA')
   );
 }
 
@@ -554,12 +564,14 @@ app.get(['/scrape', '/api/scrape'], async (req, res) => {
 
   // Step 1: fast HTTP fetch
   let html = '';
+  let httpStatus = 200;
   try {
     const response = await fetch(url, {
       headers: { ...BROWSER_HEADERS, Referer: new URL(url).origin + '/' },
       redirect: 'follow',
       signal: AbortSignal.timeout(15000),
     });
+    httpStatus = response.status;
     html = await response.text();
   } catch (err) {
     return res.status(502).json({ error: `Fetch failed: ${err.message}` });
@@ -569,10 +581,10 @@ app.get(['/scrape', '/api/scrape'], async (req, res) => {
     return res.status(502).json({ error: 'Empty or too-short response from target site' });
   }
 
-  // Step 2: if Cloudflare challenge detected, retry with headless browser
+  // Step 2: if bot protection detected, retry with headless browser
   let usedPlaywright = false;
-  if (isCloudflareChallenge(html)) {
-    console.log(`[bot-protection] Cloudflare detected for ${url} — retrying with Playwright`);
+  if (isBotProtected(html, httpStatus)) {
+    console.log(`[bot-protection] Detected for ${url} (status ${httpStatus}) — retrying with Playwright`);
     try {
       // Enforce overall timeout on the entire Playwright operation
       const playwrightHtml = await Promise.race([
@@ -581,8 +593,8 @@ app.get(['/scrape', '/api/scrape'], async (req, res) => {
           setTimeout(() => reject(new Error('Playwright timed out')), PLAYWRIGHT_TIMEOUT_MS)
         ),
       ]);
-      if (isCloudflareChallenge(playwrightHtml)) {
-        throw new Error('Cloudflare challenge persists even in headless browser');
+      if (isBotProtected(playwrightHtml, 200)) {
+        throw new Error('Bot protection persists even in headless browser');
       }
       console.log(`[playwright] rendered ${playwrightHtml.length} bytes for ${url}`);
       html = playwrightHtml;
