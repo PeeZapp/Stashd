@@ -47,13 +47,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const loadProfile = async (userId: string) => {
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('Profile load timed out')), 8000)
+    );
     try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .maybeSingle();
-
+      const { data, error } = await Promise.race([
+        supabase.from('profiles').select('*').eq('id', userId).maybeSingle(),
+        timeout,
+      ]);
       if (error) throw error;
       setProfile(data);
     } catch (error) {
