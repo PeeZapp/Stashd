@@ -31,6 +31,7 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
   const [loading, setLoading] = useState(true);
   const [creatingList, setCreatingList] = useState(false);
   const [newListName, setNewListName] = useState('');
+  const [createListError, setCreateListError] = useState('');
   const [refreshingAll, setRefreshingAll] = useState(false);
   const [refreshAllStatus, setRefreshAllStatus] = useState<string | null>(null);
   const [showRefreshInfo, setShowRefreshInfo] = useState(false);
@@ -132,13 +133,18 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
 
   const handleCreateList = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newListName.trim()) return;
+    if (!newListName.trim() || !user) return;
+    setCreateListError('');
     const { error } = await supabase.from('lists').insert({
-      user_id: (await supabase.auth.getUser()).data.user?.id ?? '',
+      user_id: user.id,
       name: newListName.trim(),
       share_token: crypto.randomUUID(),
     });
-    if (error) { console.error(error); return; }
+    if (error) {
+      console.error(error);
+      setCreateListError('Could not create list. Please try again.');
+      return;
+    }
     setNewListName('');
     setCreatingList(false);
     await loadData();
@@ -542,33 +548,38 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
         {dashboardTab === 'wishlists' && (
           <>
             {creatingList && (
-              <form
-                onSubmit={handleCreateList}
-                className="mb-6 bg-white rounded-xl border border-gray-200 p-4 flex items-center space-x-3"
-              >
-                <input
-                  type="text"
-                  value={newListName}
-                  onChange={(e) => setNewListName(e.target.value)}
-                  placeholder="List name"
-                  autoFocus
-                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent text-sm"
-                />
-                <button
-                  type="submit"
-                  disabled={!newListName.trim()}
-                  className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium transition-colors"
+              <div className="mb-6">
+                <form
+                  onSubmit={handleCreateList}
+                  className="bg-white rounded-xl border border-gray-200 p-4 flex items-center space-x-3"
                 >
-                  Create
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { setCreatingList(false); setNewListName(''); }}
-                  className="px-3 py-2 text-gray-500 hover:text-gray-700 text-sm transition-colors"
-                >
-                  Cancel
-                </button>
-              </form>
+                  <input
+                    type="text"
+                    value={newListName}
+                    onChange={(e) => { setNewListName(e.target.value); setCreateListError(''); }}
+                    placeholder="List name"
+                    autoFocus
+                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent text-sm"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!newListName.trim()}
+                    className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium transition-colors"
+                  >
+                    Create
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setCreatingList(false); setNewListName(''); setCreateListError(''); }}
+                    className="px-3 py-2 text-gray-500 hover:text-gray-700 text-sm transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </form>
+                {createListError && (
+                  <p className="mt-2 text-sm text-red-600 px-1">{createListError}</p>
+                )}
+              </div>
             )}
 
             {loading ? (

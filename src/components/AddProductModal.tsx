@@ -48,6 +48,7 @@ export default function AddProductModal({ lists, onClose, onSuccess, prefillUrl 
   const [newListName, setNewListName] = useState('');
   const [botProtected, setBotProtected] = useState(false);
   const [fetchSeconds, setFetchSeconds] = useState(0);
+  const [pendingNewLists, setPendingNewLists] = useState<string[]>([]);
 
   useEffect(() => {
     if (step !== 'fetching') { setFetchSeconds(0); return; }
@@ -174,11 +175,14 @@ export default function AddProductModal({ lists, onClose, onSuccess, prefillUrl 
 
       let allListIds = [...selectedListIds];
 
-      if (newListName.trim()) {
-        const shareToken = crypto.randomUUID();
+      const listsToCreate = [
+        ...pendingNewLists,
+        ...(newListName.trim() ? [newListName.trim()] : []),
+      ];
+      for (const name of listsToCreate) {
         const { data: newList, error: listError } = await supabase
           .from('lists')
-          .insert({ user_id: user.id, name: newListName.trim(), share_token: shareToken })
+          .insert({ user_id: user.id, name, share_token: crypto.randomUUID() })
           .select()
           .single();
         if (listError) throw listError;
@@ -550,20 +554,59 @@ export default function AddProductModal({ lists, onClose, onSuccess, prefillUrl 
                   </div>
                 )}
 
+                {pendingNewLists.length > 0 && (
+                  <div className="flex flex-wrap gap-2 mb-2">
+                    {pendingNewLists.map((name) => (
+                      <span
+                        key={name}
+                        className="inline-flex items-center gap-1 px-3 py-1 bg-gray-900 text-white text-sm rounded-full"
+                      >
+                        {name}
+                        <button
+                          type="button"
+                          onClick={() => setPendingNewLists((prev) => prev.filter((n) => n !== name))}
+                          className="ml-0.5 hover:text-gray-300 transition-colors"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
                 <div className="flex space-x-2">
                   <input
                     type="text"
                     value={newListName}
                     onChange={(e) => setNewListName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const name = newListName.trim();
+                        if (name && !pendingNewLists.includes(name)) {
+                          setPendingNewLists((prev) => [...prev, name]);
+                          setNewListName('');
+                        }
+                      }
+                    }}
                     className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent"
-                    placeholder="Create new list"
+                    placeholder="Type a list name and press +"
                   />
-                  {newListName && (
-                    <div className="flex items-center px-3 bg-gray-100 rounded-lg">
-                      <Plus className="w-4 h-4 text-gray-600" />
-                    </div>
-                  )}
+                  <button
+                    type="button"
+                    disabled={!newListName.trim()}
+                    onClick={() => {
+                      const name = newListName.trim();
+                      if (name && !pendingNewLists.includes(name)) {
+                        setPendingNewLists((prev) => [...prev, name]);
+                        setNewListName('');
+                      }
+                    }}
+                    className="flex items-center justify-center px-3 bg-gray-900 text-white rounded-lg hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    <Plus className="w-5 h-5" />
+                  </button>
                 </div>
+                <p className="text-xs text-gray-400 mt-1">Press + or Enter to add the list, then save the product.</p>
               </div>
 
               <div className="flex space-x-3 pt-4">
