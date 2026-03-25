@@ -10,8 +10,12 @@ packages = ["unzip", "chromium", "nss", "cups", "alsa-lib", "atk", "cairo", "gdk
 [userenv]
 
 [userenv.shared]
-VITE_SUPABASE_URL = "https://mazmhcspgfrlyxwbskhy.supabase.co"
-VITE_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1hem1oY3NwZ2ZybHl4d2Jza2h5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyMTgwNzYsImV4cCI6MjA4OTc5NDA3Nn0.deEJQXhJuwc6AZOVL-wo-Xk_g736CwAs1Tpzi5LTW5c"
+VITE_FIREBASE_API_KEY = "AIzaSyApFx6I6e7YM6WEaPcgteZ5KjqJRrHSRN0"
+VITE_FIREBASE_AUTH_DOMAIN = "stashd-82e87.firebaseapp.com"
+VITE_FIREBASE_PROJECT_ID = "stashd-82e87"
+VITE_FIREBASE_STORAGE_BUCKET = "stashd-82e87.firebasestorage.app"
+VITE_FIREBASE_MESSAGING_SENDER_ID = "933019260095"
+VITE_FIREBASE_APP_ID = "1:933019260095:web:b7ead7346aaf7e7c6a220a"
 
 [workflows]
 runButton = "Project"
