@@ -1,6 +1,8 @@
 import express from 'express';
 import OpenAI from 'openai';
-import { chromium } from 'playwright-core';
+import { chromium as chromiumCore } from 'playwright-core';
+import { chromium as chromiumExtra } from 'playwright-extra';
+import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -71,6 +73,8 @@ function findChromium() {
 
 const CHROMIUM_PATH = findChromium();
 
+chromiumExtra.use(StealthPlugin());
+
 let _browser = null;
 let _browserLaunchPromise = null;
 
@@ -79,7 +83,8 @@ async function getBrowser() {
   if (_browserLaunchPromise) return _browserLaunchPromise;
   if (!CHROMIUM_PATH) throw new Error('Chromium executable not found');
   _browser = null;
-  _browserLaunchPromise = chromium.launch({
+  const launcher = CHROMIUM_PATH ? chromiumExtra : chromiumCore;
+  _browserLaunchPromise = launcher.launch({
     executablePath: CHROMIUM_PATH,
     headless: true,
     args: [
@@ -127,29 +132,43 @@ async function scrapeWithPlaywright(url) {
   const bw = await getBrowser();
   const context = await bw.newContext({
     userAgent:
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-    viewport: { width: 1280, height: 800 },
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
+    viewport: { width: 1440, height: 900 },
+    locale: 'en-US',
+    timezoneId: 'America/New_York',
     extraHTTPHeaders: {
       'Accept-Language': 'en-US,en;q=0.9',
-      'Accept':
-        'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+      'sec-ch-ua': '"Chromium";v="134", "Google Chrome";v="134", "Not-A.Brand";v="99"',
+      'sec-ch-ua-mobile': '?0',
+      'sec-ch-ua-platform': '"Windows"',
     },
     ignoreHTTPSErrors: true,
-  });
-
-  await context.addInitScript(() => {
-    Object.defineProperty(navigator, 'webdriver', { get: () => false });
-    Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
-    Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
-    window.chrome = { runtime: {} };
   });
 
   const page = await context.newPage();
 
   try {
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 17000 });
-    // Give JS-heavy pages a moment to render product data
-    await page.waitForTimeout(1500);
+    // Navigate and wait for the network to go quiet (SPA rendering done)
+    await page.goto(url, { waitUntil: 'load', timeout: 25000 });
+
+    // For SPA sites: wait for network to settle, with a cap
+    try {
+      await page.waitForLoadState('networkidle', { timeout: 10000 });
+    } catch (_) {
+      // networkidle timeout is okay — content may still be ready
+    }
+
+    // Try to wait for meaningful content — h1 or a JSON-LD script
+    try {
+      await page.waitForSelector('h1, [data-testid], script[type="application/ld+json"]', { timeout: 8000 });
+    } catch (_) {
+      // If no recognisable selector appears, fall through with whatever rendered
+    }
+
+    // Give any late async data fetches one final moment
+    await page.waitForTimeout(2000);
+
     const html = await page.content();
     await context.close();
     return html;
@@ -351,6 +370,7 @@ function storeFromUrl(url) {
   }
 }
 
+// Used to decide whether to even try Playwright (initial HTTP fetch result)
 function isBotProtected(html, httpStatus) {
   if (httpStatus === 403 || httpStatus === 401 || httpStatus === 503) return true;
   return (
@@ -361,14 +381,26 @@ function isBotProtected(html, httpStatus) {
     html.includes('Checking your browser before accessing') ||
     html.includes('Enable JavaScript and cookies to continue') ||
     html.includes('challenge-platform') ||
-    // Akamai / EdgeSuite
-    html.includes('edgesuite.net') ||
-    html.includes('Reference&#32;&#35;') ||
-    (html.includes('Access Denied') && html.includes('permission to access')) ||
-    // Generic
-    html.includes('robot') ||
+    // Akamai / EdgeSuite — only flag as blocked if it looks like an Access Denied page
+    // (not just a reference to edgesuite.net as a CDN asset URL)
+    (html.includes('edgesuite.net') && html.includes('Access Denied') && html.length < 5000) ||
+    (html.includes('Reference&#32;&#35;') && html.includes('Access Denied')) ||
+    // Generic challenges
     html.includes('captcha') ||
     html.includes('CAPTCHA')
+  );
+}
+
+// Stricter check used ONLY on the Playwright-rendered result.
+// edgesuite.net is a legitimate Akamai CDN so is present on real Target pages — don't flag it.
+function isStillBotBlocked(html) {
+  return (
+    html.includes('<title>Just a moment...</title>') ||
+    html.includes('cf-browser-verification') ||
+    html.includes('cf_chl_') ||
+    html.includes('Enable JavaScript and cookies to continue') ||
+    (html.includes('Access Denied') && html.includes('permission to access') && html.length < 5000) ||
+    html.length < 1000
   );
 }
 
@@ -593,7 +625,7 @@ app.get(['/scrape', '/api/scrape'], async (req, res) => {
           setTimeout(() => reject(new Error('Playwright timed out')), PLAYWRIGHT_TIMEOUT_MS)
         ),
       ]);
-      if (isBotProtected(playwrightHtml, 200)) {
+      if (isStillBotBlocked(playwrightHtml)) {
         throw new Error('Bot protection persists even in headless browser');
       }
       console.log(`[playwright] rendered ${playwrightHtml.length} bytes for ${url}`);
