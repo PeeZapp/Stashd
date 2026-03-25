@@ -23,27 +23,52 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
-      if (session?.user) {
-        loadProfile(session.user.id);
-      } else {
-        setLoading(false);
+    let cancelled = false;
+
+    // Hard safety net — no matter what, unblock the app within 10 s
+    const safetyTimer = setTimeout(() => {
+      if (!cancelled) setLoading(false);
+    }, 10000);
+
+    const init = async () => {
+      try {
+        const sessionResult = await Promise.race([
+          supabase.auth.getSession(),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 8000)),
+        ]);
+        if (cancelled) return;
+        const session = sessionResult ? sessionResult.data.session : null;
+        setUser(session?.user ?? null);
+        if (session?.user) {
+          await loadProfile(session.user.id);
+        } else {
+          setLoading(false);
+        }
+      } catch {
+        if (!cancelled) setLoading(false);
       }
-    });
+    };
+
+    init();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (cancelled) return;
       (async () => {
         setUser(session?.user ?? null);
         if (session?.user) {
           await loadProfile(session.user.id);
         } else {
           setProfile(null);
+          setLoading(false);
         }
       })();
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      cancelled = true;
+      clearTimeout(safetyTimer);
+      subscription.unsubscribe();
+    };
   }, []);
 
   const loadProfile = async (userId: string) => {
