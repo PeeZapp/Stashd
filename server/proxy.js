@@ -404,6 +404,25 @@ function isStillBotBlocked(html) {
   );
 }
 
+// ── Residential Pi proxy ────────────────────────────────────
+
+async function scrapeWithResidentialProxy(url) {
+  const proxyUrl = process.env.RESIDENTIAL_PROXY_URL;
+  const proxyKey = process.env.RESIDENTIAL_PROXY_KEY;
+  if (!proxyUrl || !proxyKey) {
+    throw new Error('Residential proxy not configured');
+  }
+  const endpoint = `${proxyUrl}/fetch?url=${encodeURIComponent(url)}`;
+  const response = await fetch(endpoint, {
+    headers: { Authorization: `Bearer ${proxyKey}` },
+    signal: AbortSignal.timeout(25000),
+  });
+  if (!response.ok) {
+    throw new Error(`Pi proxy returned HTTP ${response.status}`);
+  }
+  return response.text();
+}
+
 // ── LLM fallback ───────────────────────────────────────────
 
 function stripHtmlToText(html) {
@@ -631,14 +650,37 @@ app.get(['/scrape', '/api/scrape'], async (req, res) => {
       console.log(`[playwright] rendered ${playwrightHtml.length} bytes for ${url}`);
       html = playwrightHtml;
       usedPlaywright = true;
-    } catch (err) {
-      console.warn(`[playwright] failed for ${url}: ${err.message}`);
-      return res.status(403).json({
-        error: 'bot_protection',
-        message: 'This site blocks automated access. Please enter the product details manually.',
-        store_name: storeFromUrl(url),
-        _debug: { blocked: true, reason: 'cloudflare', playwrightError: err.message },
-      });
+    } catch (playwrightErr) {
+      console.warn(`[playwright] failed for ${url}: ${playwrightErr.message}`);
+
+      // Step 2b: Pi residential proxy fallback (only when RESIDENTIAL_PROXY_URL is set)
+      const proxyUrl = process.env.RESIDENTIAL_PROXY_URL;
+      if (proxyUrl) {
+        console.log(`[pi-proxy] Attempting residential proxy for ${url}`);
+        try {
+          const piHtml = await scrapeWithResidentialProxy(url);
+          if (isStillBotBlocked(piHtml)) {
+            throw new Error('Bot protection persists even through residential proxy');
+          }
+          console.log(`[pi-proxy] rendered ${piHtml.length} bytes for ${url}`);
+          html = piHtml;
+        } catch (piErr) {
+          console.warn(`[pi-proxy] failed for ${url}: ${piErr.message}`);
+          return res.status(403).json({
+            error: 'bot_protection',
+            message: 'This site blocks automated access. Please enter the product details manually.',
+            store_name: storeFromUrl(url),
+            _debug: { blocked: true, reason: 'cloudflare', playwrightError: playwrightErr.message, piProxyError: piErr.message },
+          });
+        }
+      } else {
+        return res.status(403).json({
+          error: 'bot_protection',
+          message: 'This site blocks automated access. Please enter the product details manually.',
+          store_name: storeFromUrl(url),
+          _debug: { blocked: true, reason: 'cloudflare', playwrightError: playwrightErr.message },
+        });
+      }
     }
   }
 
@@ -667,6 +709,21 @@ app.get(['/playwright-status', '/api/playwright-status'], (_req, res) => {
     ready: !!(_browser && _browser.isConnected()),
     launching: !!_browserLaunchPromise,
   });
+});
+
+app.get(['/proxy-status', '/api/proxy-status'], async (_req, res) => {
+  const proxyUrl = process.env.RESIDENTIAL_PROXY_URL;
+  if (!proxyUrl) {
+    return res.json({ configured: false, reachable: false });
+  }
+  try {
+    const response = await fetch(`${proxyUrl}/health`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    res.json({ configured: true, reachable: response.ok });
+  } catch {
+    res.json({ configured: true, reachable: false });
+  }
 });
 
 app.post('/api/delete-account', async (req, res) => {

@@ -1,0 +1,16 @@
+{
+  "name": "pi-proxy",
+  "version": "1.0.0",
+  "description": "Residential proxy server for bypassing bot protection via a Raspberry Pi",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Plus, ShoppingBag, LogOut, ArrowLeft, Share2, RefreshCw, Info, GitCompare, Bookmark, X, User, Zap } from 'lucide-react';
 import { usePlaywrightStatus } from '../hooks/usePlaywrightStatus';
+import { useProxyStatus } from '../hooks/useProxyStatus';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { refreshProduct } from '../lib/refreshProduct';
@@ -34,6 +35,7 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
   const [newListName, setNewListName] = useState('');
   const [createListError, setCreateListError] = useState('');
   const playwrightStatus = usePlaywrightStatus();
+  const proxyStatus = useProxyStatus();
   const [refreshingAll, setRefreshingAll] = useState(false);
   const [refreshAllStatus, setRefreshAllStatus] = useState<string | null>(null);
   const [showRefreshInfo, setShowRefreshInfo] = useState(false);
@@ -284,6 +286,24 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
               <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-50 border border-green-200 text-green-700 rounded-full text-xs font-medium">
                 <Zap className="w-3 h-3" />
                 <span className="hidden sm:inline">Browser ready</span>
+              </span>
+            )}
+            {proxyStatus === 'unconfigured' && (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 border border-gray-200 text-gray-500 rounded-full text-xs font-medium" title="Residential proxy not configured">
+                <span className="w-1.5 h-1.5 rounded-full bg-gray-400" />
+                <span className="hidden sm:inline">Pi not set up</span>
+              </span>
+            )}
+            {proxyStatus === 'unreachable' && (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 border border-amber-200 text-amber-700 rounded-full text-xs font-medium" title="Residential proxy configured but unreachable">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                <span className="hidden sm:inline">Pi offline</span>
+              </span>
+            )}
+            {proxyStatus === 'reachable' && (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-50 border border-green-200 text-green-700 rounded-full text-xs font-medium" title="Residential proxy active">
+                <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                <span className="hidden sm:inline">Pi ready</span>
               </span>
             )}
             <button
