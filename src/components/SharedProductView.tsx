@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ShoppingBag, ExternalLink, ArrowLeft } from 'lucide-react';
-import { supabase } from '../lib/supabase';
+import { getProductById } from '../lib/firestore';
 import type { Product } from '../lib/types';
 
 interface SharedProductViewProps {
@@ -18,13 +18,7 @@ export default function SharedProductView({ productId }: SharedProductViewProps)
 
   const loadProduct = async () => {
     try {
-      const { data, error: productError } = await supabase
-        .from('products')
-        .select('*')
-        .eq('id', productId)
-        .maybeSingle();
-
-      if (productError) throw productError;
+      const data = await getProductById(productId);
       if (!data) {
         setError('Product not found');
         setLoading(false);

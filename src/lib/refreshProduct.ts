@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { createNotifications, updateProduct } from './firestore';
 import { scrapeProduct } from './scrapeProduct';
 import type { Product } from './types';
 
@@ -70,10 +70,10 @@ export async function refreshProduct(
     if (scraped.store_name && !product.store_name) updatePayload.store_name = scraped.store_name;
     if (scraped.sku && !product.sku) updatePayload.sku = scraped.sku;
 
-    await supabase.from('products').update(updatePayload).eq('id', product.id);
+    await updateProduct(product.id, updatePayload as Parameters<typeof updateProduct>[1]);
 
     if (notifications.length > 0) {
-      await supabase.from('notifications').insert(
+      await createNotifications(
         notifications.map((n) => ({
           user_id: userId,
           product_id: product.id,

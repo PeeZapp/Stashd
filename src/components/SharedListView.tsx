@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ShoppingBag, ExternalLink, ArrowLeft } from 'lucide-react';
-import { supabase } from '../lib/supabase';
+import { getListWithProductsByShareToken } from '../lib/firestore';
 import type { Product, List } from '../lib/types';
 
 interface SharedListViewProps {
@@ -19,25 +19,15 @@ export default function SharedListView({ shareToken }: SharedListViewProps) {
 
   const loadSharedList = async () => {
     try {
-      const { data, error: listError } = await supabase
-        .from('lists')
-        .select('*, list_products(products(*))')
-        .eq('share_token', shareToken)
-        .eq('is_shared', true)
-        .maybeSingle();
-
-      if (listError) throw listError;
-      if (!data) {
+      const shared = await getListWithProductsByShareToken(shareToken);
+      if (!shared) {
         setError('List not found or not shared');
         setLoading(false);
         return;
       }
 
-      const { list_products, ...listData } = data as any;
-      setList(listData);
-
-      const prods = (list_products?.map((lp: { products: Product }) => lp.products) || []).filter(Boolean) as Product[];
-      setProducts(prods);
+      setList(shared.list);
+      setProducts(shared.products as Product[]);
     } catch (err) {
       console.error('Error loading shared list:', err);
       setError('Failed to load list');

@@ -4,7 +4,7 @@ A lightweight Node.js proxy server that runs on a Raspberry Pi (or any home comp
 
 ## How it works
 
-1. Your Replit app tries `fetch` → Playwright stealth
+1. The Stashd server tries `fetch` → then Playwright stealth
 2. If both fail (e.g. Target.com.au blocks the datacenter IP), the request is forwarded to this Pi proxy
 3. The Pi makes the request from its residential IP, which Akamai has no reason to block
 4. Cloudflare Tunnel exposes the Pi securely to the internet without port forwarding
@@ -59,7 +59,7 @@ echo 'export PROXY_KEY="your-secret-key-here"' >> ~/.bashrc
 source ~/.bashrc
 ```
 
-Keep this value — you will add it to Replit as `RESIDENTIAL_PROXY_KEY`.
+Keep this value — you will set it on your host as `RESIDENTIAL_PROXY_KEY` (same value the app uses to call the Pi).
 
 ### 5. Test the server manually
 
@@ -115,11 +115,11 @@ Visit `https://pi-proxy.<your-cloudflare-domain>.com/health` — you should get 
 
 Copy the public URL (e.g. `https://pi-proxy.example.com`) — this is your `RESIDENTIAL_PROXY_URL`.
 
-### 8. Add secrets to Replit
+### 8. Configure the main Stashd app
 
-In your Replit project, add two secrets:
+Wherever you run `server/proxy.js` (local shell, cloud host, or container), set:
 
-| Secret name | Value |
+| Variable | Value |
 |---|---|
 | `RESIDENTIAL_PROXY_URL` | `https://pi-proxy.example.com` (no trailing slash) |
 | `RESIDENTIAL_PROXY_KEY` | The same value you used for `PROXY_KEY` on the Pi |
@@ -169,7 +169,7 @@ sudo systemctl status pi-proxy cloudflared
 
 ## Verifying it works end-to-end
 
-Once the secrets are set in Replit, try adding a Target.com.au product URL via the Stashd UI. The dashboard nav bar will show a "Pi proxy ready" pill (green) when the Pi is reachable.
+Once these variables are set and the app is restarted, try adding a product URL that needs the residential path (e.g. a protected retailer). The dashboard shows a "Pi proxy ready" pill (green) when the Pi is reachable.
 
 ---
 

@@ -16,10 +16,17 @@ const PORT = isProd ? (process.env.PORT || 5000) : 3001;
 
 const app = express();
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+const OPENAI_API_KEY =
+  process.env.OPENAI_API_KEY || process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+const OPENAI_BASE_URL =
+  process.env.OPENAI_BASE_URL || process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
+
+const openai = OPENAI_API_KEY
+  ? new OpenAI({
+      apiKey: OPENAI_API_KEY,
+      ...(OPENAI_BASE_URL ? { baseURL: OPENAI_BASE_URL } : {}),
+    })
+  : null;
 
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
@@ -51,6 +58,49 @@ const BROWSER_HEADERS = {
 // ── Playwright browser singleton ────────────────────────────
 
 function findChromium() {
+  const fromEnv = [
+    process.env.PLAYWRIGHT_CHROMIUM_PATH,
+    process.env.CHROMIUM_PATH,
+    process.env.CHROME_PATH,
+  ].find((candidate) => candidate && fs.existsSync(candidate));
+  if (fromEnv) {
+    console.log(`[playwright] Chromium from env: ${fromEnv}`);
+    return fromEnv;
+  }
+
+  if (process.platform === 'win32') {
+    const windowsCandidates = [
+      process.env['PROGRAMFILES'] ? `${process.env['PROGRAMFILES']}\\Google\\Chrome\\Application\\chrome.exe` : null,
+      process.env['PROGRAMFILES(X86)'] ? `${process.env['PROGRAMFILES(X86)']}\\Google\\Chrome\\Application\\chrome.exe` : null,
+      process.env.LOCALAPPDATA ? `${process.env.LOCALAPPDATA}\\Google\\Chrome\\Application\\chrome.exe` : null,
+      process.env['PROGRAMFILES'] ? `${process.env['PROGRAMFILES']}\\Microsoft\\Edge\\Application\\msedge.exe` : null,
+      process.env['PROGRAMFILES(X86)'] ? `${process.env['PROGRAMFILES(X86)']}\\Microsoft\\Edge\\Application\\msedge.exe` : null,
+    ].filter(Boolean);
+
+    for (const candidate of windowsCandidates) {
+      if (fs.existsSync(candidate)) {
+        console.log(`[playwright] Chromium found at: ${candidate}`);
+        return candidate;
+      }
+    }
+
+    try {
+      const whereChrome = execSync('where chrome', {
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      })
+        .split(/\r?\n/)
+        .find(Boolean)
+        ?.trim();
+      if (whereChrome) {
+        console.log(`[playwright] Chromium found at: ${whereChrome}`);
+        return whereChrome;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
   const candidates = [
     // Try shell PATH first (picks up Nix-installed chromium)
     () => execSync('which chromium', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim(),
@@ -77,30 +127,61 @@ chromiumExtra.use(StealthPlugin());
 
 let _browser = null;
 let _browserLaunchPromise = null;
+const BROWSER_LAUNCH_ARGS = [
+  '--no-sandbox',
+  '--disable-setuid-sandbox',
+  '--disable-dev-shm-usage',
+  '--disable-gpu',
+  '--disable-gpu-compositing',
+  '--disable-software-rasterizer',
+  '--disable-gpu-sandbox',
+  '--no-first-run',
+  '--no-zygote',
+  '--disable-blink-features=AutomationControlled',
+  '--disable-features=IsolateOrigins,site-per-process,UseOzonePlatform',
+];
 
 async function getBrowser() {
   if (_browser && _browser.isConnected()) return _browser;
   if (_browserLaunchPromise) return _browserLaunchPromise;
-  if (!CHROMIUM_PATH) throw new Error('Chromium executable not found');
   _browser = null;
-  const launcher = CHROMIUM_PATH ? chromiumExtra : chromiumCore;
-  _browserLaunchPromise = launcher.launch({
-    executablePath: CHROMIUM_PATH,
-    headless: true,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-gpu',
-      '--disable-gpu-compositing',
-      '--disable-software-rasterizer',
-      '--disable-gpu-sandbox',
-      '--no-first-run',
-      '--no-zygote',
-      '--disable-blink-features=AutomationControlled',
-      '--disable-features=IsolateOrigins,site-per-process,UseOzonePlatform',
-    ],
-  }).then((bw) => {
+
+  const attempts = [
+    ...(CHROMIUM_PATH
+      ? [{
+          label: `executablePath (${CHROMIUM_PATH})`,
+          launcher: chromiumExtra,
+          options: { executablePath: CHROMIUM_PATH, headless: true, args: BROWSER_LAUNCH_ARGS },
+        }]
+      : []),
+    ...(process.platform === 'win32'
+      ? [{
+          label: 'chrome channel',
+          launcher: chromiumExtra,
+          options: { channel: 'chrome', headless: true, args: BROWSER_LAUNCH_ARGS },
+        }]
+      : []),
+    {
+      label: 'playwright default',
+      launcher: chromiumCore,
+      options: { headless: true, args: BROWSER_LAUNCH_ARGS },
+    },
+  ];
+
+  _browserLaunchPromise = (async () => {
+    let lastError = null;
+    for (const attempt of attempts) {
+      try {
+        const bw = await attempt.launcher.launch(attempt.options);
+        console.log(`[playwright] launch success via ${attempt.label}`);
+        return bw;
+      } catch (err) {
+        lastError = err;
+        console.warn(`[playwright] launch failed via ${attempt.label}: ${err.message}`);
+      }
+    }
+    throw lastError || new Error('Chromium executable not found');
+  })().then((bw) => {
     _browser = bw;
     _browserLaunchPromise = null;
     console.log('[playwright] browser launched');
@@ -446,9 +527,7 @@ function stripHtmlToText(html) {
 }
 
 async function llmExtractProductData(html, url) {
-  const apiKey = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
-  const baseURL = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
-  if (!apiKey || !baseURL) return null;
+  if (!openai) return null;
 
   const pageText = stripHtmlToText(html);
   if (!pageText || pageText.length < 50) return null;
@@ -723,44 +802,6 @@ app.get(['/proxy-status', '/api/proxy-status'], async (_req, res) => {
     res.json({ configured: true, reachable: response.ok });
   } catch {
     res.json({ configured: true, reachable: false });
-  }
-});
-
-app.post('/api/delete-account', async (req, res) => {
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const supabaseUrl = process.env.VITE_SUPABASE_URL;
-  const anonKey = process.env.VITE_SUPABASE_ANON_KEY;
-
-  if (!serviceKey || !supabaseUrl) {
-    return res.status(500).json({ error: 'Account deletion not configured on server — add SUPABASE_SERVICE_ROLE_KEY secret' });
-  }
-
-  const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Missing auth token' });
-  }
-
-  try {
-    const token = authHeader.slice(7);
-    const userRes = await fetch(`${supabaseUrl}/auth/v1/user`, {
-      headers: { Authorization: `Bearer ${token}`, apikey: anonKey || '' },
-    });
-    if (!userRes.ok) return res.status(401).json({ error: 'Invalid token' });
-    const { id: userId } = await userRes.json();
-
-    const deleteRes = await fetch(`${supabaseUrl}/auth/v1/admin/users/${userId}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${serviceKey}`, apikey: serviceKey },
-    });
-
-    if (!deleteRes.ok) {
-      const err = await deleteRes.json().catch(() => ({}));
-      return res.status(deleteRes.status).json({ error: err.message || 'Auth user deletion failed' });
-    }
-
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: String(err) });
   }
 });
 
