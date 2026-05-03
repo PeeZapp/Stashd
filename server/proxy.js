@@ -17,8 +17,9 @@ const PORT = isProd ? (process.env.PORT || 5000) : 3001;
 const app = express();
 
 const OPENAI_API_KEY =
-  process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY;
-const OPENAI_BASE_URL = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
+  process.env.OPENAI_API_KEY || process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+const OPENAI_BASE_URL =
+  process.env.OPENAI_BASE_URL || process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
 
 const openai = OPENAI_API_KEY
   ? new OpenAI({
