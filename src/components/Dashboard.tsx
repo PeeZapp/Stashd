@@ -127,8 +127,9 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
   } | null>(null);
 
   useEffect(() => {
-    loadData();
-  }, []);
+    if (!user) return;
+    void loadData();
+  }, [user.uid]);
 
   useEffect(() => {
     setOutfitEditor((prev) => {
@@ -148,16 +149,18 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
   const loadLists = async () => {
     if (!user) return;
     try {
-      const [data, outfits] = await Promise.all([
-        getUserListsWithProducts(user.uid),
-        getUserOutfitsWithProducts(user.uid),
-      ]);
+      const data = await getUserListsWithProducts(user.uid);
       setListsWithProducts(data);
-      setOutfitsWithProducts(outfits);
       setAllLists(data.map(({ products: _p, ...l }) => l as List));
     } catch (error) {
       console.error('Error loading lists:', error);
-      return;
+    }
+    try {
+      const outfits = await getUserOutfitsWithProducts(user.uid);
+      setOutfitsWithProducts(outfits);
+    } catch (error) {
+      console.error('Error loading outfits:', error);
+      setOutfitsWithProducts([]);
     }
   };
 
