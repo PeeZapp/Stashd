@@ -73,6 +73,47 @@ function normalizeResidentialProxyBase(raw) {
   return raw.trim().replace(/\/+$/, '').replace(/:+$/, '');
 }
 
+/** First path segment like `en-au` → `en-AU,en;q=0.9` (helps LEGO / regional Akamai). */
+function inferAcceptLanguageFromUrl(urlStr) {
+  try {
+    const first = new URL(urlStr).pathname.split('/').filter(Boolean)[0] || '';
+    const m = /^([a-z]{2})-([a-z]{2})$/i.exec(first);
+    if (m) {
+      const tag = `${m[1].toLowerCase()}-${m[2].toUpperCase()}`;
+      return `${tag},${m[1].toLowerCase()};q=0.9,en;q=0.8`;
+    }
+  } catch {
+    /* ignore */
+  }
+  return BROWSER_HEADERS['Accept-Language'];
+}
+
+function inferPlaywrightLocale(urlStr) {
+  try {
+    const first = new URL(urlStr).pathname.split('/').filter(Boolean)[0] || '';
+    const m = /^([a-z]{2})-([a-z]{2})$/i.exec(first);
+    if (m) return `${m[1].toLowerCase()}-${m[2].toUpperCase()}`;
+  } catch {
+    /* ignore */
+  }
+  return 'en-US';
+}
+
+function inferPlaywrightTimezone(urlStr) {
+  const loc = inferPlaywrightLocale(urlStr);
+  if (loc === 'en-AU') return 'Australia/Sydney';
+  if (loc === 'en-GB' || loc === 'en-UK') return 'Europe/London';
+  if (loc === 'en-NZ') return 'Pacific/Auckland';
+  return 'America/New_York';
+}
+
+function buildBrowserHeadersForUrl(urlStr) {
+  return {
+    ...BROWSER_HEADERS,
+    'Accept-Language': inferAcceptLanguageFromUrl(urlStr),
+  };
+}
+
 // ── Playwright browser singleton ────────────────────────────
 
 function findChromium() {
@@ -229,18 +270,18 @@ process.on('SIGINT', async () => { await closeBrowser(); process.exit(0); });
 
 async function scrapeWithPlaywright(url) {
   const bw = await getBrowser();
+  const h = buildBrowserHeadersForUrl(url);
   const context = await bw.newContext({
-    userAgent:
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
+    userAgent: h['User-Agent'],
     viewport: { width: 1440, height: 900 },
-    locale: 'en-US',
-    timezoneId: 'America/New_York',
+    locale: inferPlaywrightLocale(url),
+    timezoneId: inferPlaywrightTimezone(url),
     extraHTTPHeaders: {
-      'Accept-Language': 'en-US,en;q=0.9',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-      'sec-ch-ua': '"Chromium";v="134", "Google Chrome";v="134", "Not-A.Brand";v="99"',
-      'sec-ch-ua-mobile': '?0',
-      'sec-ch-ua-platform': '"Windows"',
+      Accept: h.Accept,
+      'Accept-Language': h['Accept-Language'],
+      'sec-ch-ua': h['Sec-Ch-Ua'],
+      'sec-ch-ua-mobile': h['Sec-Ch-Ua-Mobile'],
+      'sec-ch-ua-platform': h['Sec-Ch-Ua-Platform'],
     },
     ignoreHTTPSErrors: true,
   });
@@ -559,6 +600,15 @@ function isStillBotBlocked(html) {
   );
 }
 
+/** True if HTML still looks like a real PDP (avoid throwing away Pi HTML on overly strict bot heuristics). */
+function hasLikelyProductPageHtml(html) {
+  const ld = parseJsonLd(html);
+  if (ld && (ld.title || (ld.price !== undefined && ld.price !== null && ld.price > 0))) return true;
+  if (extractOgTag(html, 'title') && html.length > 12_000) return true;
+  if (/["']@type["']\s*:\s*["'][^"']*Product[^"']*["']/i.test(html) && html.length > 8000) return true;
+  return false;
+}
+
 // ── Residential Pi proxy ────────────────────────────────────
 
 async function scrapeWithResidentialProxy(url) {
@@ -570,7 +620,7 @@ async function scrapeWithResidentialProxy(url) {
   const endpoint = `${proxyUrl}/fetch?url=${encodeURIComponent(url)}`;
   const response = await fetch(endpoint, {
     headers: { Authorization: `Bearer ${proxyKey}` },
-    signal: AbortSignal.timeout(25000),
+    signal: AbortSignal.timeout(35_000),
   });
   if (!response.ok) {
     throw new Error(`Pi proxy returned HTTP ${response.status}`);
@@ -779,7 +829,7 @@ app.get(['/scrape', '/api/scrape'], async (req, res) => {
   let httpStatus = 200;
   try {
     const response = await fetch(url, {
-      headers: { ...BROWSER_HEADERS, Referer: new URL(url).origin + '/' },
+      headers: { ...buildBrowserHeadersForUrl(url), Referer: new URL(url).origin + '/' },
       redirect: 'follow',
       signal: AbortSignal.timeout(15000),
     });
@@ -793,11 +843,34 @@ app.get(['/scrape', '/api/scrape'], async (req, res) => {
     return res.status(502).json({ error: 'Empty or too-short response from target site' });
   }
 
+  // Step 1b: datacenter 401/403 — try residential HTML before Playwright (LEGO AU, etc.)
+  const resiConfigured =
+    !!normalizeResidentialProxyBase(process.env.RESIDENTIAL_PROXY_URL) &&
+    !!process.env.RESIDENTIAL_PROXY_KEY;
+  let skipPlaywright = false;
+  if (
+    resiConfigured &&
+    (httpStatus === 403 || httpStatus === 401) &&
+    isBotProtected(html, httpStatus)
+  ) {
+    console.log(`[pi-proxy] HTTP ${httpStatus} from datacenter — trying residential fetch before Playwright`);
+    try {
+      const piHtml = await scrapeWithResidentialProxy(url);
+      if (!isStillBotBlocked(piHtml) || hasLikelyProductPageHtml(piHtml)) {
+        console.log(`[pi-proxy] early residential OK (${piHtml.length} bytes)`);
+        html = piHtml;
+        skipPlaywright = true;
+      }
+    } catch (earlyErr) {
+      console.warn(`[pi-proxy] early residential: ${earlyErr.message}`);
+    }
+  }
+
   // Step 2: if bot protection detected — or static HTML has no usable price (common SPA/luxury PDPs) — use Playwright (+ Pi fallback)
   let usedPlaywright = false;
   const botWall = isBotProtected(html, httpStatus);
   const sparsePrice = !botWall && shallowHtmlMissingProductPrice(html);
-  if (botWall || sparsePrice) {
+  if (!skipPlaywright && (botWall || sparsePrice)) {
     if (botWall) {
       console.log(`[bot-protection] Detected for ${url} (status ${httpStatus}) — retrying with Playwright`);
     } else {
@@ -811,7 +884,7 @@ app.get(['/scrape', '/api/scrape'], async (req, res) => {
           setTimeout(() => reject(new Error('Playwright timed out')), PLAYWRIGHT_TIMEOUT_MS)
         ),
       ]);
-      if (isStillBotBlocked(playwrightHtml)) {
+      if (isStillBotBlocked(playwrightHtml) && !hasLikelyProductPageHtml(playwrightHtml)) {
         throw new Error('Bot protection persists even in headless browser');
       }
       console.log(`[playwright] rendered ${playwrightHtml.length} bytes for ${url}`);
@@ -826,7 +899,7 @@ app.get(['/scrape', '/api/scrape'], async (req, res) => {
         console.log(`[pi-proxy] Attempting residential proxy for ${url}`);
         try {
           const piHtml = await scrapeWithResidentialProxy(url);
-          if (isStillBotBlocked(piHtml)) {
+          if (isStillBotBlocked(piHtml) && !hasLikelyProductPageHtml(piHtml)) {
             throw new Error('Bot protection persists even through residential proxy');
           }
           console.log(`[pi-proxy] rendered ${piHtml.length} bytes for ${url}`);

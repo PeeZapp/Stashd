@@ -40,6 +40,21 @@ function normalizeScrapeUrl(href) {
   return out;
 }
 
+/** Match server/proxy.js — first segment `en-au` → regional Accept-Language for LEGO / Akamai. */
+function inferAcceptLanguageFromUrl(urlStr) {
+  try {
+    const first = new URL(urlStr).pathname.split('/').filter(Boolean)[0] || '';
+    const m = /^([a-z]{2})-([a-z]{2})$/i.exec(first);
+    if (m) {
+      const tag = `${m[1].toLowerCase()}-${m[2].toUpperCase()}`;
+      return `${tag},${m[1].toLowerCase()};q=0.9,en;q=0.8`;
+    }
+  } catch {
+    /* ignore */
+  }
+  return BROWSER_HEADERS['Accept-Language'];
+}
+
 function authMiddleware(req, res, next) {
   const authHeader = req.headers['authorization'];
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -77,11 +92,12 @@ app.get('/fetch', authMiddleware, async (req, res) => {
     const response = await fetch(url, {
       headers: {
         ...BROWSER_HEADERS,
+        'Accept-Language': inferAcceptLanguageFromUrl(url),
         Referer: parsedUrl.origin + '/',
         Host: parsedUrl.host,
       },
       redirect: 'follow',
-      signal: AbortSignal.timeout(20000),
+      signal: AbortSignal.timeout(30000),
     });
 
     const html = await response.text();
