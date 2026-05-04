@@ -32,24 +32,43 @@ Vercel is a poor fit for long Playwright jobs; keep the API on Render (or simila
 
 ### A.2 Docker (recommended): Playwright + Chromium on Render
 
-Render’s **native Node** build environment is **read-only for `apt-get`**, so installing Chromium with `apt-get` in the build command **fails**. Use **Docker** instead; this repo includes a **`Dockerfile`** based on [`mcr.microsoft.com/playwright`](https://playwright.dev/docs/docker) (browsers and OS libraries already present).
+Render’s **native Node** build environment is **read-only for `apt-get`**, so a **Build command** that runs `apt-get install chromium` **fails**. Use **Docker** instead; this repo includes a **`Dockerfile`** based on [`mcr.microsoft.com/playwright`](https://playwright.dev/docs/docker) (browsers and OS libraries already present).
 
-1. In the Render service **Settings** → **Build & Deploy**:
-   - **Environment:** **Docker** (not “Node”).
-   - **Dockerfile path:** `Dockerfile` (repo root).
-   - **Docker build context directory:** leave default (`.`).
-2. **Remove** any custom “Build command” that runs `apt-get` or chains `npm start` — Docker builds from the Dockerfile only.
-3. **Start command:** leave empty when using Docker; the image **`CMD`** is already `npm start`.
+Render splits this into two **Settings** areas (names match the sidebar):
 
-After you merge/push the Dockerfile, trigger **Manual Deploy → Clear build cache & deploy**.
+**Settings → Build**
+
+| Field | What to set |
+|--------|----------------|
+| **Environment** | **Docker** (not “Node”) |
+| **Dockerfile path** | `Dockerfile` (repo root) |
+| **Docker build context directory** | `.` (default) |
+| **Build command** | **Clear it** / leave empty when using Docker — the Dockerfile runs `npm ci` and `npm run build`. Do **not** leave the old `apt-get … && npm install …` line here. |
+
+**Settings → Deploy**
+
+| Field | What to set |
+|--------|----------------|
+| **Start command** | **Clear it** / leave empty when using Docker — the image **`CMD`** is already `npm start`. (`npm start` and `npm run start` are equivalent if you ever set it manually on Node.) |
+| **Pre-deploy command** | Leave empty unless you add migrations later. |
+
+After saving, use **Manual Deploy → Clear build cache & deploy** so the first Docker build runs clean.
 
 ### A.2b If you stay on native Node (not recommended here)
 
-Use **two separate fields** in Render — never put **`npm start`** in the **Build command** (and never use `; npm start`, which runs start even when `apt-get` / `npm install` fails and causes “Cannot find package `express`”).
+Use **Build** and **Deploy** separately — never put **`npm start`** in the **Build command**, and never use `; npm start` (that runs start even when `apt-get` / `npm install` fails → “Cannot find package `express`”).
+
+**Settings → Build**
 
 | Field | Value |
 |--------|--------|
+| **Environment** | Node |
 | **Build command** | `npm install && npm run build` |
+
+**Settings → Deploy**
+
+| Field | Value |
+|--------|--------|
 | **Start command** | `npm start` |
 
 Without Docker or a system Chromium, Playwright may still fail at runtime; prefer **Docker** above.
