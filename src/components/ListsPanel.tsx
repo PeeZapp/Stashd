@@ -60,6 +60,7 @@ export default function ListsPanel({ lists, onClose, onListsChanged }: ListsPane
         user_id: user.uid,
         name: newListName.trim(),
         share_token: crypto.randomUUID(),
+        scope: 'wishlist',
       });
     } catch (error) {
       console.error(error);

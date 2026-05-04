@@ -18,6 +18,7 @@ import { db } from './firebase';
 import { normalizeShareToken } from './shareLink';
 import type {
   List,
+  ListScope,
   ListProduct,
   Notification,
   Outfit,
@@ -70,10 +71,13 @@ function mapProduct(id: string, data: DocumentData): Product {
 }
 
 function mapList(id: string, data: DocumentData): List {
+  const rawScope = data.scope as string | undefined;
+  const scope: ListScope = rawScope === 'stash' ? 'stash' : 'wishlist';
   return {
     id,
     user_id: data.user_id as string,
     name: (data.name as string) ?? '',
+    scope,
     is_shared: Boolean(data.is_shared),
     share_token: (data.share_token as string | null) ?? null,
     created_at: asIso(data.created_at),
@@ -218,11 +222,13 @@ export async function createList(params: {
   user_id: string;
   name: string;
   share_token?: string | null;
+  scope?: ListScope;
 }): Promise<List> {
   const ref = await addDoc(collection(db, 'lists'), {
     user_id: params.user_id,
     name: params.name,
     share_token: params.share_token ?? null,
+    scope: params.scope ?? 'wishlist',
     is_shared: false,
     created_at: serverTimestamp(),
     updated_at: serverTimestamp(),

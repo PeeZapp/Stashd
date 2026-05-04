@@ -37,7 +37,7 @@ import CompareModal from './CompareModal';
 import BookmarkletModal from './BookmarkletModal';
 import OutfitModal from './OutfitModal';
 
-type View = { type: 'lists' } | { type: 'list-detail'; listId: string; ownedOnly?: boolean };
+type View = { type: 'lists' } | { type: 'list-detail'; listId: string };
 type DashboardTab = 'wishlists' | 'owned';
 
 interface DashboardProps {
@@ -232,6 +232,7 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
         user_id: user.uid,
         name: newListName.trim(),
         share_token: crypto.randomUUID(),
+        scope: dashboardTab === 'owned' ? 'stash' : 'wishlist',
       });
     } catch (error) {
       console.error(error);
@@ -332,10 +333,14 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
       ? listsWithProducts.find((l) => l.id === view.listId) ?? null
       : null;
 
-  const displayList =
-    fullList && view.type === 'list-detail' && view.ownedOnly
-      ? { ...fullList, products: fullList.products.filter((p) => p.is_owned) }
-      : fullList;
+  const wishlistListsWithProducts = useMemo(
+    () => listsWithProducts.filter((l) => l.scope !== 'stash'),
+    [listsWithProducts]
+  );
+  const stashListsWithProducts = useMemo(
+    () => listsWithProducts.filter((l) => l.scope === 'stash'),
+    [listsWithProducts]
+  );
 
   /** Owned items across all lists (for outfits picker) — not deleted when an outfit is removed. */
   const stashProducts = useMemo(() => {
@@ -375,7 +380,7 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
   }, [listsWithProducts]);
 
   const compareProducts =
-    displayList?.products.filter((p) => selectedForCompare.includes(p.id)) ?? [];
+    fullList?.products.filter((p) => selectedForCompare.includes(p.id)) ?? [];
 
   // ── Nav bar ───────────────────────────────────────────────
 
@@ -445,9 +450,9 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
 
   // ── List detail view ──────────────────────────────────────
 
-  if (view.type === 'list-detail' && fullList && displayList) {
-    const hasSale = displayList.products.some((p) => p.is_on_sale);
-    const total = displayList.products.reduce((s, p) => s + (p.current_price ?? 0), 0);
+  if (view.type === 'list-detail' && fullList) {
+    const hasSale = fullList.products.some((p) => p.is_on_sale);
+    const total = fullList.products.reduce((s, p) => s + (p.current_price ?? 0), 0);
 
     return (
       <div className="min-h-screen bg-gray-50">
@@ -456,17 +461,14 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
           <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
             <div>
               <h1 className="text-3xl font-bold text-gray-900 mb-1">{fullList.name}</h1>
-              {view.ownedOnly && (
-                <p className="text-sm text-amber-900 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 mb-2 max-w-xl">
-                  Your stash in this list: only products you marked <strong>I own this</strong>. Use Wishlists to add items, then mark them owned.
+              {fullList.scope === 'stash' && (
+                <p className="text-sm text-gray-500 mb-2 max-w-xl">
+                  Stash list — add items you own from the grid on <strong>Owned</strong> using product details, or move pieces here from your wishlists.
                 </p>
               )}
               <div className="flex flex-wrap items-center gap-3 text-gray-500 text-sm">
                 <span>
-                  {displayList.products.length} item{displayList.products.length !== 1 ? 's' : ''}
-                  {view.ownedOnly && fullList.products.length !== displayList.products.length
-                    ? ` (${fullList.products.length} on list)`
-                    : ''}
+                  {fullList.products.length} item{fullList.products.length !== 1 ? 's' : ''}
                 </span>
                 {total > 0 && (
                   <>
@@ -484,7 +486,7 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
             </div>
 
             <div className="flex items-center gap-2 flex-wrap">
-              {displayList.products.length >= 2 && (
+              {fullList.products.length >= 2 && (
                 <button
                   onClick={() => {
                     setCompareMode((m) => !m);
@@ -529,13 +531,13 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
             </div>
           )}
 
-          {displayList.products.length === 0 ? (
+          {fullList.products.length === 0 ? (
             <div className="text-center py-20">
               <ShoppingBag className="w-16 h-16 text-gray-300 mx-auto mb-4" />
               <h3 className="text-xl font-semibold text-gray-900 mb-2">No products in this list</h3>
               <p className="text-gray-600 mb-6">
-                {view.ownedOnly
-                  ? 'Mark items you own from your wishlists, or switch to Wishlists to add products.'
+                {fullList.scope === 'stash'
+                  ? 'Open a product from your stash on the Owned tab and add it to this list, or add from Wishlists then mark owned.'
                   : 'Add products and assign them to this list'}
               </p>
               <button
@@ -548,7 +550,7 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-              {displayList.products.map((product) => (
+              {fullList.products.map((product) => (
                 <ProductCard
                   key={product.id}
                   product={product}
@@ -559,7 +561,7 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
                   compareMode={compareMode}
                   isSelectedForCompare={selectedForCompare.includes(product.id)}
                   onToggleCompare={() => toggleCompare(product.id)}
-                  hideOwned={Boolean(view.ownedOnly)}
+                  hideOwned={fullList.scope === 'stash'}
                 />
               ))}
             </div>
@@ -621,7 +623,13 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
               Welcome back, {profile?.name || 'there'}
             </h1>
             <p className="text-gray-600">
-              {listsWithProducts.length} list{listsWithProducts.length !== 1 ? 's' : ''}
+              {wishlistListsWithProducts.length} wishlist{wishlistListsWithProducts.length !== 1 ? 's' : ''}
+              {stashListsWithProducts.length > 0 && (
+                <span className="text-gray-400">
+                  {' '}
+                  · {stashListsWithProducts.length} stash list{stashListsWithProducts.length !== 1 ? 's' : ''}
+                </span>
+              )}
             </p>
           </div>
 
@@ -651,7 +659,7 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
                 className="flex items-center space-x-2 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium"
               >
                 <Plus className="w-4 h-4" />
-                <span>New List</span>
+                <span>{dashboardTab === 'owned' ? 'New stash list' : 'New List'}</span>
               </button>
             )}
           </div>
@@ -758,7 +766,7 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
               <div className="text-center py-12">
                 <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900" />
               </div>
-            ) : listsWithProducts.length === 0 && !creatingList ? (
+            ) : wishlistListsWithProducts.length === 0 && !creatingList ? (
               <div className="text-center py-20">
                 <ShoppingBag className="w-16 h-16 text-gray-300 mx-auto mb-4" />
                 <h3 className="text-xl font-semibold text-gray-900 mb-2">Your stash is empty</h3>
@@ -785,7 +793,7 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                {listsWithProducts.map((list) => (
+                {wishlistListsWithProducts.map((list) => (
                   <ListCard
                     key={list.id}
                     list={list}
@@ -818,7 +826,8 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
                       )}
                     </p>
                     <p className="text-xs text-gray-400 max-w-xl">
-                      Create lists (e.g. summer clothes), curate outfits from your stash, and add photos of your looks.
+                      Everything you marked <strong>I own this</strong> appears here once. Create stash lists below to
+                      group them (e.g. summer clothes), or build outfits with photos.
                     </p>
                   </div>
                   <button
@@ -830,6 +839,31 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
                     <span>New outfit</span>
                   </button>
                 </div>
+
+                <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Your stash</h2>
+                {stashProducts.length === 0 ? (
+                  <div className="text-center py-12 mb-10 border border-dashed border-gray-200 rounded-2xl">
+                    <ShoppingBag className="w-14 h-14 text-gray-300 mx-auto mb-3" />
+                    <p className="text-gray-600 text-sm max-w-md mx-auto mb-2">
+                      Nothing owned yet. On <strong>Wishlists</strong>, save products and tap <strong>I own this</strong>{' '}
+                      when you have them — they show up here as individual pieces.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 mb-10">
+                    {stashProducts.map((product) => (
+                      <ProductCard
+                        key={product.id}
+                        product={product}
+                        onClick={() => setSelectedProduct(product)}
+                        onDelete={() => handleDeleteProduct(product.id)}
+                        onPriceUpdate={updateProductInState}
+                        onMarkOwned={updateProductInState}
+                        hideOwned
+                      />
+                    ))}
+                  </div>
+                )}
 
                 <div className="mb-8">
                   <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2">
@@ -877,27 +911,27 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
                   )}
                 </div>
 
-                <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Lists</h2>
-                {listsWithProducts.length === 0 && !creatingList ? (
-                  <div className="text-center py-16 border border-dashed border-gray-200 rounded-2xl">
-                    <ShoppingBag className="w-14 h-14 text-gray-300 mx-auto mb-3" />
-                    <h3 className="text-lg font-semibold text-gray-900 mb-2">Organize your stash</h3>
-                    <p className="text-gray-600 text-sm max-w-md mx-auto mb-2">
-                      Create a list (e.g. <em>Summer clothes</em>), save products from any shop, then tap{' '}
-                      <strong>I own this</strong> on each card once it is in your closet.
-                    </p>
-                    <p className="text-sm text-gray-400">
-                      When you buy from a wishlist, use the same button — owned items show up here under that list.
+                <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Stash lists</h2>
+                <p className="text-sm text-gray-500 mb-4 max-w-2xl">
+                  Stash lists are only on this tab — not the same as wishlists. Open any item above, use{' '}
+                  <strong>Add to Lists</strong>, and pick a stash list to organize your owned pieces.
+                </p>
+                {stashListsWithProducts.length === 0 && !creatingList ? (
+                  <div className="text-center py-14 border border-dashed border-gray-200 rounded-2xl">
+                    <ShoppingBag className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+                    <h3 className="text-base font-semibold text-gray-900 mb-2">No stash lists yet</h3>
+                    <p className="text-gray-600 text-sm max-w-md mx-auto">
+                      Use <strong>New stash list</strong> to create one (e.g. “Summer rotation”), then add items from
+                      your stash via each product’s details.
                     </p>
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                    {listsWithProducts.map((list) => (
+                    {stashListsWithProducts.map((list) => (
                       <ListCard
                         key={list.id}
                         list={list}
-                        displayMode="owned"
-                        onClick={() => setView({ type: 'list-detail', listId: list.id, ownedOnly: true })}
+                        onClick={() => setView({ type: 'list-detail', listId: list.id })}
                         onDelete={() => handleDeleteList(list.id)}
                         onShare={() => handleShareList(list)}
                         onRename={(newName) => handleRenameList(list.id, newName)}

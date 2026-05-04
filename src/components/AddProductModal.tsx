@@ -161,6 +161,7 @@ export default function AddProductModal({ lists, onClose, onSuccess, prefillUrl 
           user_id: user.uid,
           name,
           share_token: crypto.randomUUID(),
+          scope: 'wishlist',
         });
         allListIds = [...allListIds, newList.id];
       }
@@ -177,6 +178,7 @@ export default function AddProductModal({ lists, onClose, onSuccess, prefillUrl 
             user_id: user.uid,
             name: 'Uncategorised',
             share_token: crypto.randomUUID(),
+            scope: 'wishlist',
           });
           allListIds = [created.id];
         }

@@ -26,10 +26,14 @@ export interface Product {
   updated_at: string;
 }
 
+export type ListScope = 'wishlist' | 'stash';
+
 export interface List {
   id: string;
   user_id: string;
   name: string;
+  /** wishlist = shopping lists; stash = organizing things you already own (Owned tab). */
+  scope: ListScope;
   is_shared: boolean;
   share_token: string | null;
   created_at: string;
