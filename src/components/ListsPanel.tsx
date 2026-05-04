@@ -38,9 +38,10 @@ export default function ListsPanel({ lists, onClose, onListsChanged }: ListsPane
   }, [editingListId]);
 
   const loadListProducts = async (listId: string) => {
+    if (!user) return;
     setLoading(true);
     try {
-      const rows = await getListProductRows(listId);
+      const rows = await getListProductRows(listId, user.uid);
       const products = await getProductsByIds(rows.map((row) => row.product_id));
       setListProducts(products);
     } catch (error) {
@@ -69,9 +70,10 @@ export default function ListsPanel({ lists, onClose, onListsChanged }: ListsPane
   };
 
   const handleDeleteList = async (listId: string) => {
+    if (!user) return;
     if (!confirm('Are you sure you want to delete this list?')) return;
     try {
-      await deleteList(listId);
+      await deleteList(listId, user.uid);
     } catch (error) {
       console.error(error);
       return;

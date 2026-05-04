@@ -363,6 +363,31 @@ function parseJsonLd(html) {
           if (typeof offers.availability === 'string') result.availability = offers.availability;
         }
 
+        // Schema.org ProductGroup (e.g. Nike AU): root has no offers; each size variant has Offer.price
+        if (
+          typeStr.toLowerCase().includes('productgroup') &&
+          Array.isArray(item.hasVariant)
+        ) {
+          let maxVariantPrice = null;
+          let variantImage = null;
+          for (const v of item.hasVariant) {
+            if (!v || typeof v !== 'object') continue;
+            const vo = v.offers;
+            if (vo && typeof vo === 'object') {
+              const vp = parsePrice(vo.price);
+              if (vp !== null && vp > 0) {
+                maxVariantPrice =
+                  maxVariantPrice === null ? vp : Math.max(maxVariantPrice, vp);
+              }
+            }
+            if (!variantImage && typeof v.image === 'string') variantImage = v.image;
+            else if (!variantImage && v.image && typeof v.image === 'object' && v.image.url)
+              variantImage = v.image.url;
+          }
+          if (maxVariantPrice !== null) result.price = maxVariantPrice;
+          if (!result.image && variantImage) result.image = variantImage;
+        }
+
         if (result.title || result.price !== undefined) return result;
       }
     } catch {
@@ -403,13 +428,12 @@ function extractPriceFromScripts(html) {
   for (const pattern of PRICE_PATTERNS) {
     const hit = pattern.exec(sc);
     if (hit) {
-      let val = parseFloat(hit[1]);
-      if (!isNaN(val) && val > 0) {
-        if (Number.isInteger(val) && val > 99 && !hit[0].includes('.')) val = val / 100;
-        if (val > 0 && val < 100000) {
-          price = Math.round(val * 100) / 100;
-          break;
-        }
+      const val = parseFloat(hit[1]);
+      if (!isNaN(val) && val > 0 && val < 100000) {
+        // Do not divide whole integers by 100: many PDPs (e.g. Nike) use dollars as 320 meaning $320,
+        // not cents. Prefer JSON-LD / meta prices; script regexes are best-effort only.
+        price = Math.round(val * 100) / 100;
+        break;
       }
     }
   }
@@ -417,13 +441,10 @@ function extractPriceFromScripts(html) {
   for (const pattern of ORIG_PATTERNS) {
     const hit = pattern.exec(sc);
     if (hit) {
-      let val = parseFloat(hit[1]);
-      if (!isNaN(val) && val > 0) {
-        if (Number.isInteger(val) && val > 99 && !hit[0].includes('.')) val = val / 100;
-        if (val > 0 && val < 100000) {
-          originalPrice = Math.round(val * 100) / 100;
-          break;
-        }
+      const val = parseFloat(hit[1]);
+      if (!isNaN(val) && val > 0 && val < 100000) {
+        originalPrice = Math.round(val * 100) / 100;
+        break;
       }
     }
   }
@@ -470,6 +491,36 @@ function isBotProtected(html, httpStatus) {
     html.includes('captcha') ||
     html.includes('CAPTCHA')
   );
+}
+
+/**
+ * Many luxury / SPA PDPs return HTTP 200 + marketing HTML without a challenge string,
+ * so isBotProtected stays false — but price/product only appear after JS. If we already
+ * have structured price in the static HTML, skip the expensive browser path.
+ */
+function shallowHtmlMissingProductPrice(html) {
+  const ld = parseJsonLd(html);
+  if (ld && ld.price !== undefined && ld.price !== null && ld.price > 0) return false;
+
+  const metaPrice =
+    parsePrice(extractOgTag(html, 'price:amount')) ??
+    parsePrice(extractMetaName(html, 'product:price:amount')) ??
+    parsePrice(extractMetaName(html, 'price'));
+  if (metaPrice) return false;
+
+  const itempropPrice = parsePrice(extractItemprop(html, 'price'));
+  if (itempropPrice) return false;
+
+  const js = extractPriceFromScripts(html);
+  if (js.price !== null) return false;
+
+  const hasProductHint =
+    !!extractOgTag(html, 'title') ||
+    !!extractOgTag(html, 'image') ||
+    !!(ld && ld.title) ||
+    html.length > 25000;
+
+  return hasProductHint;
 }
 
 // Stricter check used ONLY on the Playwright-rendered result.
@@ -711,10 +762,16 @@ app.get(['/scrape', '/api/scrape'], async (req, res) => {
     return res.status(502).json({ error: 'Empty or too-short response from target site' });
   }
 
-  // Step 2: if bot protection detected, retry with headless browser
+  // Step 2: if bot protection detected — or static HTML has no usable price (common SPA/luxury PDPs) — use Playwright (+ Pi fallback)
   let usedPlaywright = false;
-  if (isBotProtected(html, httpStatus)) {
-    console.log(`[bot-protection] Detected for ${url} (status ${httpStatus}) — retrying with Playwright`);
+  const botWall = isBotProtected(html, httpStatus);
+  const sparsePrice = !botWall && shallowHtmlMissingProductPrice(html);
+  if (botWall || sparsePrice) {
+    if (botWall) {
+      console.log(`[bot-protection] Detected for ${url} (status ${httpStatus}) — retrying with Playwright`);
+    } else {
+      console.log(`[scrape] No product price in static HTML for ${url} — retrying with Playwright`);
+    }
     try {
       // Enforce overall timeout on the entire Playwright operation
       const playwrightHtml = await Promise.race([

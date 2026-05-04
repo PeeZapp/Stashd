@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { scrapeApiUrl } from '../lib/scrapeApiBase';
 
 export type ProxyState = 'unconfigured' | 'unreachable' | 'reachable';
 
@@ -8,7 +9,7 @@ export function useProxyStatus(): ProxyState {
 
   const poll = async () => {
     try {
-      const res = await fetch('/api/proxy-status', {
+      const res = await fetch(scrapeApiUrl('/api/proxy-status'), {
         signal: AbortSignal.timeout(6000),
       });
       if (!res.ok) return;

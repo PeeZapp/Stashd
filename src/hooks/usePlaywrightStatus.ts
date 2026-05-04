@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { scrapeApiUrl } from '../lib/scrapeApiBase';
 
 export type PlaywrightState = 'idle' | 'launching' | 'ready';
 
@@ -22,7 +23,7 @@ export function usePlaywrightStatus(): PlaywrightState {
       if (cancelled) return;
       let nextMs = POLL_MS_ACTIVE;
       try {
-        const res = await fetch('/api/playwright-status', {
+        const res = await fetch(scrapeApiUrl('/api/playwright-status'), {
           signal: AbortSignal.timeout(4000),
         });
         if (!res.ok) {

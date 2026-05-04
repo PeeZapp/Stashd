@@ -80,9 +80,10 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
   };
 
   const handleDeleteProduct = async (productId: string) => {
+    if (!user) return;
     if (!confirm('Are you sure you want to delete this product?')) return;
     try {
-      await deleteProduct(productId);
+      await deleteProduct(productId, user.uid);
     } catch (error) {
       console.error(error);
       return;
@@ -91,9 +92,10 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
   };
 
   const handleDeleteList = async (listId: string) => {
+    if (!user) return;
     if (!confirm('Are you sure you want to delete this list?')) return;
     try {
-      await deleteList(listId);
+      await deleteList(listId, user.uid);
     } catch (error) {
       console.error(error);
       return;

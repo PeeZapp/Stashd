@@ -57,6 +57,10 @@ Four built-in colour schemes (Profile page, persisted in localStorage):
 
 Copy `.env.example` to `.env` (or `.env.local`) and fill in values from the [Firebase console](https://console.firebase.google.com/) (Project settings → Your apps → Web app).
 
+**Firestore security rules** — if you see `Missing or insufficient permissions` when saving products or adding them to lists, open **Firebase console → Firestore Database → Rules**, paste the contents of [`firestore.rules`](./firestore.rules) from this repo, and **Publish**. (Or run `firebase deploy --only firestore:rules` from a machine with the [Firebase CLI](https://firebase.google.com/docs/cli) linked to the same project.)
+
+**Composite indexes** — `list_products` queries filter by `list_id` + `user_id` (and `product_id` + `user_id`). Deploy [`firestore.indexes.json`](./firestore.indexes.json) with `firebase deploy --only firestore:indexes`, or create the suggested composite indexes from the link in the browser console if Firestore reports a missing index.
+
 **Client (Vite)** — must be prefixed with `VITE_`:
 
 | Variable | Description |
@@ -97,6 +101,8 @@ npm run build && npm start
 - `npm start` sets `NODE_ENV=production` and runs `server/proxy.js`.  
 - In production the proxy serves `dist/` and SPA fallback; `/api/*` stays on the same host/port.  
 - Listen port: `PORT` (default `5000`).  
+
+**Vercel + separate API host:** step-by-step guide for a production PWA on Vercel and an always-on scrape server is in [`docs/VERCEL_PRODUCTION.md`](./docs/VERCEL_PRODUCTION.md). Set `VITE_SCRAPE_API_URL` on Vercel to your hosted API origin (see `.env.example`).
 
 ## Notes
 

@@ -1,3 +1,6 @@
+import { normalizeProtocolRelativeUrl } from './normalizeMediaUrl';
+import { scrapeApiUrl } from './scrapeApiBase';
+
 export interface ScrapedProduct {
   title: string | null;
   current_price: number | null;
@@ -23,7 +26,7 @@ export function parsePrice(raw: string | number | null | undefined): number | nu
 
 async function fetchViaProxy(url: string): Promise<ScrapedProduct | null> {
   try {
-    const res = await fetch(`/api/scrape?url=${encodeURIComponent(url)}`, {
+    const res = await fetch(scrapeApiUrl(`/api/scrape?url=${encodeURIComponent(url)}`), {
       signal: AbortSignal.timeout(120000),
     });
     const data = await res.json();
@@ -47,7 +50,7 @@ async function fetchViaProxy(url: string): Promise<ScrapedProduct | null> {
       current_price: data.current_price ?? null,
       original_price: data.original_price ?? null,
       is_on_sale: data.is_on_sale ?? false,
-      image_url: data.image_url ?? null,
+      image_url: normalizeProtocolRelativeUrl(data.image_url ?? null) || null,
       store_name: data.store_name ?? null,
       description: data.description ?? null,
       sku: data.sku ?? null,
@@ -146,7 +149,7 @@ async function fetchViaCorsProxy(url: string): Promise<ScrapedProduct | null> {
     current_price,
     original_price,
     is_on_sale: current_price !== null && original_price !== null && original_price > current_price,
-    image_url,
+    image_url: normalizeProtocolRelativeUrl(image_url) || null,
     store_name,
     description,
     sku: null,

@@ -1,0 +1,63 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isListOwnerForCreate(listId) {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/lists/$(listId))
+        && get(/databases/$(database)/documents/lists/$(listId)).data.user_id == request.auth.uid;
+    }
+
+    function isProductOwnerForCreate(productId) {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/products/$(productId))
+        && get(/databases/$(database)/documents/products/$(productId)).data.user_id == request.auth.uid;
+    }
+
+    match /profiles/{userId} {
+      allow read, create, update: if isSignedIn() && request.auth.uid == userId;
+      allow delete: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    match /lists/{listId} {
+      allow read: if (isSignedIn() && resource.data.user_id == request.auth.uid)
+        || resource.data.is_shared == true;
+      allow create: if isSignedIn()
+        && request.resource.data.user_id == request.auth.uid;
+      allow update, delete: if isSignedIn()
+        && resource.data.user_id == request.auth.uid;
+    }
+
+    match /products/{productId} {
+      allow read: if true;
+      allow create: if isSignedIn()
+        && request.resource.data.user_id == request.auth.uid;
+      allow update, delete: if isSignedIn()
+        && resource.data.user_id == request.auth.uid;
+    }
+
+    match /list_products/{rowId} {
+      allow read: if (isSignedIn() && resource.data.user_id == request.auth.uid)
+        || get(/databases/$(database)/documents/lists/$(resource.data.list_id)).data.is_shared == true;
+
+      allow create: if isSignedIn()
+        && request.resource.data.user_id == request.auth.uid
+        && isListOwnerForCreate(request.resource.data.list_id)
+        && isProductOwnerForCreate(request.resource.data.product_id);
+
+      allow update, delete: if isSignedIn()
+        && resource.data.user_id == request.auth.uid;
+    }
+
+    match /notifications/{notificationId} {
+      allow read, update, delete: if isSignedIn()
+        && request.auth.uid == resource.data.user_id;
+      allow create: if isSignedIn()
+        && request.resource.data.user_id == request.auth.uid;
+    }
+  }
+}

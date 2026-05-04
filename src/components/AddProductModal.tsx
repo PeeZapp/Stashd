@@ -9,6 +9,7 @@ import {
   getUserLists,
 } from '../lib/firestore';
 import type { List } from '../lib/types';
+import { normalizeProtocolRelativeUrl } from '../lib/normalizeMediaUrl';
 
 interface AddProductModalProps {
   lists: List[];
@@ -89,7 +90,7 @@ export default function AddProductModal({ lists, onClose, onSuccess, prefillUrl 
         title: scraped.title ?? '',
         currentPrice: scraped.current_price != null ? String(scraped.current_price) : '',
         originalPrice: scraped.original_price != null ? String(scraped.original_price) : '',
-        imageUrl: scraped.image_url ?? '',
+        imageUrl: normalizeProtocolRelativeUrl(scraped.image_url ?? ''),
         storeName: scraped.store_name ?? '',
         description: scraped.description ?? '',
         sku: scraped.sku ?? '',
@@ -141,7 +142,7 @@ export default function AddProductModal({ lists, onClose, onSuccess, prefillUrl 
         current_price: currentPrice,
         original_price: originalPrice,
         is_on_sale: isOnSale,
-        image_url: formData.imageUrl.trim() || null,
+        image_url: normalizeProtocolRelativeUrl(formData.imageUrl) || null,
         store_name: formData.storeName.trim() || null,
         description: formData.description.trim() || null,
         sku: formData.sku.trim() || null,
@@ -446,7 +447,9 @@ export default function AddProductModal({ lists, onClose, onSuccess, prefillUrl 
                   </div>
                 )}
                 <input
-                  type="url"
+                  type="text"
+                  inputMode="url"
+                  autoComplete="url"
                   value={formData.imageUrl}
                   onChange={(e) => update('imageUrl', e.target.value)}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent"

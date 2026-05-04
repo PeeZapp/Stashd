@@ -45,7 +45,7 @@ export default function ProductDetailModal({
 
   const loadProductLists = async () => {
     try {
-      const rows = await getProductListRows(product.id);
+      const rows = await getProductListRows(product.id, product.user_id);
       setProductLists(rows.map((row) => row.list_id));
     } catch (error) {
       console.error(error);
@@ -61,6 +61,7 @@ export default function ProductDetailModal({
     if (isInList) {
       try {
         await removeProductFromList({
+          user_id: product.user_id,
           list_id: listId,
           product_id: product.id,
         });

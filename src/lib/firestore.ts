@@ -161,9 +161,13 @@ export async function updateProduct(
   return mapProduct(snap.id, snap.data());
 }
 
-export async function deleteProduct(productId: string): Promise<void> {
+export async function deleteProduct(productId: string, userId: string): Promise<void> {
   const listProductsSnap = await getDocs(
-    query(collection(db, 'list_products'), where('product_id', '==', productId))
+    query(
+      collection(db, 'list_products'),
+      where('product_id', '==', productId),
+      where('user_id', '==', userId)
+    )
   );
   const batch = writeBatch(db);
   listProductsSnap.docs.forEach((d) => batch.delete(d.ref));
@@ -209,9 +213,13 @@ export async function updateList(
   );
 }
 
-export async function deleteList(listId: string): Promise<void> {
+export async function deleteList(listId: string, userId: string): Promise<void> {
   const listProductsSnap = await getDocs(
-    query(collection(db, 'list_products'), where('list_id', '==', listId))
+    query(
+      collection(db, 'list_products'),
+      where('list_id', '==', listId),
+      where('user_id', '==', userId)
+    )
   );
   const batch = writeBatch(db);
   listProductsSnap.docs.forEach((d) => batch.delete(d.ref));
@@ -219,14 +227,31 @@ export async function deleteList(listId: string): Promise<void> {
   await batch.commit();
 }
 
-export async function getListProductRows(listId: string): Promise<ListProduct[]> {
-  const snap = await getDocs(query(collection(db, 'list_products'), where('list_id', '==', listId)));
+/**
+ * Rows linking products to a list. Pass `userId` whenever the caller knows the owner uid
+ * (signed-in user’s lists) so Firestore rules can match `where('user_id', '==', uid)` on queries.
+ * For public shared lists, pass `listOwnerUserId` from the list document (see getListWithProductsByShareToken).
+ */
+export async function getListProductRows(
+  listId: string,
+  userId?: string | null
+): Promise<ListProduct[]> {
+  const parts = [where('list_id', '==', listId)];
+  if (userId != null && userId !== '') parts.push(where('user_id', '==', userId));
+  const snap = await getDocs(query(collection(db, 'list_products'), ...parts));
   return snap.docs.map((d) => mapListProduct(d.id, d.data()));
 }
 
-export async function getProductListRows(productId: string): Promise<ListProduct[]> {
+export async function getProductListRows(
+  productId: string,
+  userId: string
+): Promise<ListProduct[]> {
   const snap = await getDocs(
-    query(collection(db, 'list_products'), where('product_id', '==', productId))
+    query(
+      collection(db, 'list_products'),
+      where('product_id', '==', productId),
+      where('user_id', '==', userId)
+    )
   );
   return snap.docs.map((d) => mapListProduct(d.id, d.data()));
 }
@@ -236,7 +261,7 @@ export async function addProductToList(params: {
   list_id: string;
   product_id: string;
 }): Promise<void> {
-  const existing = await getListProductRows(params.list_id);
+  const existing = await getListProductRows(params.list_id, params.user_id);
   if (existing.some((row) => row.product_id === params.product_id)) return;
   await addDoc(collection(db, 'list_products'), {
     ...params,
@@ -259,10 +284,11 @@ export async function addProductToLists(params: {
 }
 
 export async function removeProductFromList(params: {
+  user_id: string;
   list_id: string;
   product_id: string;
 }): Promise<void> {
-  const rows = await getListProductRows(params.list_id);
+  const rows = await getListProductRows(params.list_id, params.user_id);
   const batch = writeBatch(db);
   rows
     .filter((row) => row.product_id === params.product_id)
@@ -317,7 +343,7 @@ export async function getListWithProductsByShareToken(
 ): Promise<{ list: List; products: Product[] } | null> {
   const list = await getListByShareToken(shareToken);
   if (!list) return null;
-  const rows = await getListProductRows(list.id);
+  const rows = await getListProductRows(list.id, list.user_id);
   const products = await getProductsByIds(rows.map((r) => r.product_id));
   return { list, products };
 }
