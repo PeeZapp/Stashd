@@ -248,25 +248,25 @@ async function scrapeWithPlaywright(url) {
   const page = await context.newPage();
 
   try {
-    // Navigate and wait for the network to go quiet (SPA rendering done)
-    await page.goto(url, { waitUntil: 'load', timeout: 25000 });
+    // Navigate — luxury / big retail PDPs often need >25s on cold instances
+    await page.goto(url, { waitUntil: 'load', timeout: 55_000 });
 
     // For SPA sites: wait for network to settle, with a cap
     try {
-      await page.waitForLoadState('networkidle', { timeout: 10000 });
+      await page.waitForLoadState('networkidle', { timeout: 18_000 });
     } catch (_) {
       // networkidle timeout is okay — content may still be ready
     }
 
     // Try to wait for meaningful content — h1 or a JSON-LD script
     try {
-      await page.waitForSelector('h1, [data-testid], script[type="application/ld+json"]', { timeout: 8000 });
+      await page.waitForSelector('h1, [data-testid], script[type="application/ld+json"]', { timeout: 12_000 });
     } catch (_) {
       // If no recognisable selector appears, fall through with whatever rendered
     }
 
     // Give any late async data fetches one final moment
-    await page.waitForTimeout(2000);
+    await new Promise((r) => setTimeout(r, 2500));
 
     const html = await page.content();
     await context.close();
@@ -493,6 +493,13 @@ function storeFromUrl(url) {
 // Used to decide whether to even try Playwright (initial HTTP fetch result)
 function isBotProtected(html, httpStatus) {
   if (httpStatus === 403 || httpStatus === 401 || httpStatus === 503) return true;
+  // Do not use html.includes('captcha') — it matches "reCAPTCHA" on normal retail PDPs and forces Playwright/Pi every time.
+  const h = html.toLowerCase();
+  const sansRecaptcha = h.replace(/recaptcha/gi, '');
+  const captchaWall =
+    sansRecaptcha.includes('hcaptcha') ||
+    /\bvisual\s*captcha\b/i.test(html) ||
+    /\bplease\s+complete\s+(the\s+)?captcha\b/i.test(h);
   return (
     // Cloudflare
     html.includes('<title>Just a moment...</title>') ||
@@ -505,9 +512,7 @@ function isBotProtected(html, httpStatus) {
     // (not just a reference to edgesuite.net as a CDN asset URL)
     (html.includes('edgesuite.net') && html.includes('Access Denied') && html.length < 5000) ||
     (html.includes('Reference&#32;&#35;') && html.includes('Access Denied')) ||
-    // Generic challenges
-    html.includes('captcha') ||
-    html.includes('CAPTCHA')
+    captchaWall
   );
 }
 
@@ -753,7 +758,11 @@ async function extractProductData(html, url) {
 
 // ── Scrape endpoint ─────────────────────────────────────────
 
-const PLAYWRIGHT_TIMEOUT_MS = 20000;
+/** Outer cap for scrapeWithPlaywright (must exceed goto + networkidle + selector waits). */
+const PLAYWRIGHT_TIMEOUT_MS = Math.min(
+  120_000,
+  Math.max(25_000, Number.parseInt(process.env.PLAYWRIGHT_TIMEOUT_MS || '', 10) || 65_000)
+);
 
 app.get(['/scrape', '/api/scrape'], async (req, res) => {
   const rawUrl = req.query.url;
