@@ -5,6 +5,7 @@ import Dashboard from './components/Dashboard';
 import ProfilePage from './components/ProfilePage';
 import SharedListView from './components/SharedListView';
 import SharedProductView from './components/SharedProductView';
+import { normalizeShareToken } from './lib/shareLink';
 
 type Route =
   | { type: 'landing' }
@@ -16,10 +17,10 @@ type Route =
 function getInitialRoute(): Route {
   const path = window.location.pathname;
   if (path.startsWith('/share/list/')) {
-    return { type: 'shared-list', param: path.replace('/share/list/', '') };
+    return { type: 'shared-list', param: normalizeShareToken(path.slice('/share/list/'.length)) };
   }
   if (path.startsWith('/share/product/')) {
-    return { type: 'shared-product', param: path.replace('/share/product/', '') };
+    return { type: 'shared-product', param: normalizeShareToken(path.slice('/share/product/'.length)) };
   }
   if (path === '/add') {
     const params = new URLSearchParams(window.location.search);

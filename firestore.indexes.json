@@ -1,6 +1,14 @@
 {
   "indexes": [
     {
+      "collectionGroup": "lists",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "share_token", "order": "ASCENDING" },
+        { "fieldPath": "is_shared", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "list_products",
       "queryScope": "COLLECTION",
       "fields": [

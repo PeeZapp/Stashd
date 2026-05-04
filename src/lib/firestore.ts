@@ -15,6 +15,7 @@ import {
   type DocumentData,
 } from 'firebase/firestore';
 import { db } from './firebase';
+import { normalizeShareToken } from './shareLink';
 import type { List, ListProduct, Notification, PriceSource, Product, Profile } from './types';
 
 function nowIso(): string {
@@ -329,13 +330,19 @@ export async function getUserListsWithProducts(
 }
 
 export async function getListByShareToken(shareToken: string): Promise<List | null> {
+  const token = normalizeShareToken(shareToken);
+  if (!token) return null;
+  // Require is_shared in the query so anonymous reads satisfy security rules (lists are
+  // created with share_token but is_shared false until the owner shares).
   const snap = await getDocs(
-    query(collection(db, 'lists'), where('share_token', '==', shareToken))
+    query(
+      collection(db, 'lists'),
+      where('share_token', '==', token),
+      where('is_shared', '==', true)
+    )
   );
   if (snap.empty) return null;
-  const d = snap.docs.find((candidate) => candidate.data().is_shared);
-  if (!d) return null;
-  return mapList(d.id, d.data());
+  return mapList(snap.docs[0].id, snap.docs[0].data());
 }
 
 export async function getListWithProductsByShareToken(

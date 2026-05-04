@@ -84,7 +84,7 @@ export default function ListsPanel({ lists, onClose, onListsChanged }: ListsPane
 
   const handleShareList = async (list: List) => {
     let token = list.share_token;
-    if (!list.is_shared) {
+    if (!list.is_shared || !token) {
       token = token ?? crypto.randomUUID();
       try {
         await updateList(list.id, { is_shared: true, share_token: token });
@@ -123,8 +123,8 @@ export default function ListsPanel({ lists, onClose, onListsChanged }: ListsPane
   const getTotalCost = () => listProducts.reduce((sum, p) => sum + (p.current_price ?? 0), 0);
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-hidden">
+      <div className="bg-white rounded-2xl max-w-4xl w-full max-h-[calc(100dvh-2rem)] overflow-hidden flex flex-col min-h-0">
         <div className="p-6 border-b border-gray-200 flex items-center justify-between">
           <h2 className="text-2xl font-bold text-gray-900">Your Lists</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors">
@@ -132,7 +132,7 @@ export default function ListsPanel({ lists, onClose, onListsChanged }: ListsPane
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-6">
+        <div className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain p-6">
           <form onSubmit={handleCreateList} className="mb-6 flex space-x-2">
             <input
               type="text"

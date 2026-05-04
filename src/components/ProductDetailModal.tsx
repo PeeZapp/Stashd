@@ -123,11 +123,11 @@ export default function ProductDetailModal({
 
   return (
     <div
-      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto"
+      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-hidden"
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-2xl max-w-3xl w-full p-8 relative my-8"
+        className="bg-white rounded-2xl max-w-3xl w-full max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-y-contain p-8 relative"
         onClick={(e) => e.stopPropagation()}
       >
         <button
