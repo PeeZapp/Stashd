@@ -30,22 +30,29 @@ Vercel is a poor fit for long Playwright jobs; keep the API on Render (or simila
 5. **Region:** pick one close to you (and to your Pi tunnel if latency matters).
 6. **Instance type:** **Free** (see **A.5** for spin-down behavior).
 
-### A.2 Build and start commands
+### A.2 Docker (recommended): Playwright + Chromium on Render
+
+Render’s **native Node** build environment is **read-only for `apt-get`**, so installing Chromium with `apt-get` in the build command **fails**. Use **Docker** instead; this repo includes a **`Dockerfile`** based on [`mcr.microsoft.com/playwright`](https://playwright.dev/docs/docker) (browsers and OS libraries already present).
+
+1. In the Render service **Settings** → **Build & Deploy**:
+   - **Environment:** **Docker** (not “Node”).
+   - **Dockerfile path:** `Dockerfile` (repo root).
+   - **Docker build context directory:** leave default (`.`).
+2. **Remove** any custom “Build command” that runs `apt-get` or chains `npm start` — Docker builds from the Dockerfile only.
+3. **Start command:** leave empty when using Docker; the image **`CMD`** is already `npm start`.
+
+After you merge/push the Dockerfile, trigger **Manual Deploy → Clear build cache & deploy**.
+
+### A.2b If you stay on native Node (not recommended here)
+
+Use **two separate fields** in Render — never put **`npm start`** in the **Build command** (and never use `; npm start`, which runs start even when `apt-get` / `npm install` fails and causes “Cannot find package `express`”).
 
 | Field | Value |
 |--------|--------|
-| **Root directory** | *(leave empty — repo root)* |
-| **Runtime** | **Node** |
-| **Build command** | See below |
+| **Build command** | `npm install && npm run build` |
 | **Start command** | `npm start` |
 
-**Build command** (installs a system Chromium for Playwright, then Node deps + Vite build):
-
-```bash
-apt-get update -y && apt-get install -y --no-install-recommends chromium && npm install && npm run build
-```
-
-If `chromium` fails to install on Render’s image, try `chromium-browser` or check Render’s current Node image docs; you can also set **`PLAYWRIGHT_CHROMIUM_PATH`** / **`CHROMIUM_PATH`** in the dashboard to the path printed by `which chromium` after a successful install.
+Without Docker or a system Chromium, Playwright may still fail at runtime; prefer **Docker** above.
 
 ### A.3 Health check (optional but useful)
 
@@ -65,7 +72,7 @@ Set these in the dashboard (never commit secrets to git):
 | `OPENAI_BASE_URL` | Only if you use a non-default OpenAI-compatible endpoint |
 | `RESIDENTIAL_PROXY_URL` | Your Pi tunnel base URL (optional) |
 | `RESIDENTIAL_PROXY_KEY` | Same secret as on the Pi (optional) |
-| `PLAYWRIGHT_CHROMIUM_PATH` or `CHROMIUM_PATH` | e.g. `/usr/bin/chromium` if auto-detection fails |
+| `PLAYWRIGHT_CHROMIUM_PATH` or `CHROMIUM_PATH` | Only if you use **native Node** and Chromium is non-standard; **Docker** image usually needs neither |
 
 **Do not set** `PORT` manually unless Render asks you to; Render injects `PORT`. `npm start` already sets `NODE_ENV=production` on Linux.
 
