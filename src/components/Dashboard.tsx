@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, ShoppingBag, LogOut, ArrowLeft, Share2, RefreshCw, Info, GitCompare, Bookmark, X, User, Zap } from 'lucide-react';
+import { Plus, ShoppingBag, LogOut, ArrowLeft, Share2, RefreshCw, Info, GitCompare, Bookmark, X, User } from 'lucide-react';
 import { usePlaywrightStatus } from '../hooks/usePlaywrightStatus';
 import { useProxyStatus } from '../hooks/useProxyStatus';
 import { useAuth } from '../contexts/AuthContext';
@@ -42,6 +42,56 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
   const [createListError, setCreateListError] = useState('');
   const playwrightStatus = usePlaywrightStatus();
   const proxyStatus = useProxyStatus();
+
+  const browserLive = playwrightStatus === 'ready';
+  const piOk = proxyStatus === 'unconfigured' || proxyStatus === 'reachable';
+  const piUnreachable = proxyStatus === 'unreachable';
+
+  let appStatusTone: 'green' | 'yellow' | 'red';
+  let appStatusLabel: string;
+  let appStatusTitle: string;
+  if (browserLive && piOk) {
+    appStatusTone = 'green';
+    appStatusLabel = 'App ready';
+    appStatusTitle =
+      proxyStatus === 'reachable'
+        ? 'Browser scrape API is ready; residential proxy (Pi) is reachable.'
+        : 'Browser scrape API is ready; Pi proxy is not configured (optional).';
+  } else if (!browserLive && piUnreachable) {
+    appStatusTone = 'red';
+    appStatusLabel = 'App offline';
+    appStatusTitle =
+      'Scrape API is not ready and the Pi/residential proxy is unreachable. Check Render and your Pi tunnel.';
+  } else {
+    appStatusTone = 'yellow';
+    if (playwrightStatus === 'launching') {
+      appStatusLabel = 'Warming up…';
+      appStatusTitle =
+        'Browser is launching on the server. First load after idle can take 30–60s on free hosting.';
+    } else if (browserLive && piUnreachable) {
+      appStatusLabel = 'Pi offline';
+      appStatusTitle =
+        'Scrape API is ready, but the residential proxy (Pi) is unreachable. Scrapes may fail on bot-protected sites.';
+    } else {
+      appStatusLabel = 'Starting…';
+      appStatusTitle =
+        'Waiting for the scrape API (cold start or server waking). Pi: ' +
+        (proxyStatus === 'unconfigured' ? 'not configured (optional).' : 'reachable.');
+    }
+  }
+
+  const appStatusClass =
+    appStatusTone === 'green'
+      ? 'bg-green-50 border-green-200 text-green-700'
+      : appStatusTone === 'yellow'
+        ? 'bg-amber-50 border-amber-200 text-amber-700'
+        : 'bg-red-50 border-red-200 text-red-700';
+  const appStatusDotClass =
+    appStatusTone === 'green'
+      ? 'bg-green-500'
+      : appStatusTone === 'yellow'
+        ? `bg-amber-400 ${playwrightStatus === 'launching' ? 'animate-pulse' : ''}`
+        : 'bg-red-500';
   const [refreshingAll, setRefreshingAll] = useState(false);
   const [refreshAllStatus, setRefreshAllStatus] = useState<string | null>(null);
   const [showRefreshInfo, setShowRefreshInfo] = useState(false);
@@ -171,7 +221,7 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
     }
 
     if (allProducts.length === 0) {
-      setRefreshAllStatus('No products to refresh.');
+      setRefreshAllStatus('No products to check.');
       setRefreshingAll(false);
       return;
     }
@@ -267,42 +317,14 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
           </div>
 
           <div className="flex items-center space-x-2">
-            {playwrightStatus === 'idle' && (
-              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 border border-gray-200 text-gray-500 rounded-full text-xs font-medium">
-                <span className="w-1.5 h-1.5 rounded-full bg-gray-400" />
-                <span className="hidden sm:inline">Browser standby</span>
-              </span>
-            )}
-            {playwrightStatus === 'launching' && (
-              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 border border-amber-200 text-amber-700 rounded-full text-xs font-medium">
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-                <span className="hidden sm:inline">Browser warming up…</span>
-              </span>
-            )}
-            {playwrightStatus === 'ready' && (
-              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-50 border border-green-200 text-green-700 rounded-full text-xs font-medium">
-                <Zap className="w-3 h-3" />
-                <span className="hidden sm:inline">Browser ready</span>
-              </span>
-            )}
-            {proxyStatus === 'unconfigured' && (
-              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 border border-gray-200 text-gray-500 rounded-full text-xs font-medium" title="Residential proxy not configured">
-                <span className="w-1.5 h-1.5 rounded-full bg-gray-400" />
-                <span className="hidden sm:inline">Pi not set up</span>
-              </span>
-            )}
-            {proxyStatus === 'unreachable' && (
-              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 border border-amber-200 text-amber-700 rounded-full text-xs font-medium" title="Residential proxy configured but unreachable">
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-                <span className="hidden sm:inline">Pi offline</span>
-              </span>
-            )}
-            {proxyStatus === 'reachable' && (
-              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-50 border border-green-200 text-green-700 rounded-full text-xs font-medium" title="Residential proxy active">
-                <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
-                <span className="hidden sm:inline">Pi ready</span>
-              </span>
-            )}
+            <span
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 border rounded-full text-xs font-medium ${appStatusClass}`}
+              title={appStatusTitle}
+              aria-label={appStatusTitle}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${appStatusDotClass}`} />
+              <span>{appStatusLabel}</span>
+            </span>
             <button
               onClick={() => setShowBookmarklet(true)}
               className="hidden sm:flex items-center space-x-1.5 px-3 py-2 border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors text-sm"
@@ -506,12 +528,12 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
                   className="flex items-center space-x-2 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm font-medium"
                 >
                   <RefreshCw className={`w-4 h-4 ${refreshingAll ? 'animate-spin' : ''}`} />
-                  <span>{refreshingAll ? (refreshAllStatus ?? 'Refreshing…') : 'Refresh Prices'}</span>
+                  <span>{refreshingAll ? (refreshAllStatus ?? 'Checking…') : 'Check prices'}</span>
                 </button>
                 <button
                   onClick={() => setShowRefreshInfo((v) => !v)}
                   className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-gray-200 hover:bg-gray-300 rounded-full flex items-center justify-center transition-colors"
-                  title="About price refresh"
+                  title="About checking prices"
                 >
                   <Info className="w-2.5 h-2.5 text-gray-600" />
                 </button>
@@ -535,7 +557,7 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
             <div className="flex items-start space-x-2">
               <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
               <p>
-                <strong>How price tracking works:</strong> Stashd doesn't automatically re-check prices in the background. Click <em>Refresh Prices</em> whenever you want the latest pricing info — it re-scrapes each product's page and flags anything that's gone on sale or changed price.
+                Prices aren’t tracked automatically. Pressing <strong>Check prices</strong> will check prices for all items on your list and tell you when something is discounted.
               </p>
             </div>
             <button onClick={() => setShowRefreshInfo(false)} className="text-amber-500 hover:text-amber-700 flex-shrink-0">

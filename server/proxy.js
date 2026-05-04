@@ -55,6 +55,24 @@ const BROWSER_HEADERS = {
   'Upgrade-Insecure-Requests': '1',
 };
 
+/** Strip stray trailing ":" from a URL (bad redirects, copy/paste). Never removes ":" from "https://". */
+function normalizeScrapeUrl(href) {
+  const s = String(href ?? '').trim();
+  if (!s) return s;
+  let out = s;
+  while (out.endsWith(':')) {
+    if (out.endsWith('://')) break;
+    out = out.slice(0, -1).trimEnd();
+  }
+  return out;
+}
+
+/** Trim trailing slashes / colons from RESIDENTIAL_PROXY_URL (e.g. …cloudflared.app: from env). */
+function normalizeResidentialProxyBase(raw) {
+  if (raw == null || typeof raw !== 'string') return raw;
+  return raw.trim().replace(/\/+$/, '').replace(/:+$/, '');
+}
+
 // ── Playwright browser singleton ────────────────────────────
 
 function findChromium() {
@@ -539,7 +557,7 @@ function isStillBotBlocked(html) {
 // ── Residential Pi proxy ────────────────────────────────────
 
 async function scrapeWithResidentialProxy(url) {
-  const proxyUrl = process.env.RESIDENTIAL_PROXY_URL;
+  const proxyUrl = normalizeResidentialProxyBase(process.env.RESIDENTIAL_PROXY_URL);
   const proxyKey = process.env.RESIDENTIAL_PROXY_KEY;
   if (!proxyUrl || !proxyKey) {
     throw new Error('Residential proxy not configured');
@@ -738,8 +756,12 @@ async function extractProductData(html, url) {
 const PLAYWRIGHT_TIMEOUT_MS = 20000;
 
 app.get(['/scrape', '/api/scrape'], async (req, res) => {
-  const { url } = req.query;
-  if (!url || typeof url !== 'string') {
+  const rawUrl = req.query.url;
+  if (rawUrl == null || typeof rawUrl !== 'string' || !String(rawUrl).trim()) {
+    return res.status(400).json({ error: 'url query param required' });
+  }
+  const url = normalizeScrapeUrl(rawUrl);
+  if (!url) {
     return res.status(400).json({ error: 'url query param required' });
   }
 
@@ -790,7 +812,7 @@ app.get(['/scrape', '/api/scrape'], async (req, res) => {
       console.warn(`[playwright] failed for ${url}: ${playwrightErr.message}`);
 
       // Step 2b: Pi residential proxy fallback (only when RESIDENTIAL_PROXY_URL is set)
-      const proxyUrl = process.env.RESIDENTIAL_PROXY_URL;
+      const proxyUrl = normalizeResidentialProxyBase(process.env.RESIDENTIAL_PROXY_URL);
       if (proxyUrl) {
         console.log(`[pi-proxy] Attempting residential proxy for ${url}`);
         try {
@@ -848,7 +870,7 @@ app.get(['/playwright-status', '/api/playwright-status'], (_req, res) => {
 });
 
 app.get(['/proxy-status', '/api/proxy-status'], async (_req, res) => {
-  const proxyUrl = process.env.RESIDENTIAL_PROXY_URL;
+  const proxyUrl = normalizeResidentialProxyBase(process.env.RESIDENTIAL_PROXY_URL);
   if (!proxyUrl) {
     return res.json({ configured: false, reachable: false });
   }

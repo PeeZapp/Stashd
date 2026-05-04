@@ -195,12 +195,22 @@ The app uses **`vite-plugin-pwa`**. HTTPS on Vercel is enough for install / serv
 
 ---
 
+## Pi & Cloudflare after production (usually nothing)
+
+Moving the scrape API to **Render** does **not** require changing your **Cloudflare Tunnel** or Pi layout in the common setup:
+
+- **Tunnel DNS / `config.yml`:** Same hostname pointing at `localhost:8080` (or whatever port your `pi-proxy` uses). The browser never talks to the tunnel directly; **Render** calls `RESIDENTIAL_PROXY_URL` with **`RESIDENTIAL_PROXY_KEY`** (must match **`PROXY_KEY`** on the Pi).
+- **Pi:** No need to configure Vercel or Firebase on the Pi. Keep **`stashd-pi-proxy`** and **`stashd-cloudflared`** running as in [`pi-proxy/PI_SETUP.md`](../pi-proxy/PI_SETUP.md).
+- **Update only if:** you rotated the proxy secret (set the new value on **both** Render and the Pi), changed the tunnel hostname (update **`RESIDENTIAL_PROXY_URL`** on Render), or added **Cloudflare Access** / strict **WAF** rules in front of the tunnel hostname — in that case you must allow the scrape server (Render) to reach **`/health`** and **`/fetch`**, or Access will block server-to-server requests.
+
+---
+
 ## Checklist
 
 - [ ] Render Web Service: build + start, env vars, URL copied
 - [ ] Vercel: `VITE_FIREBASE_*` + `VITE_SCRAPE_API_URL` (Render origin, no trailing slash)
 - [ ] Firebase **authorized domains** include the Vercel hostname
-- [ ] Production test: sign in → add product → refresh prices
+- [ ] Production test: sign in → add product → check prices
 
 ---
 

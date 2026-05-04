@@ -28,6 +28,18 @@ const BROWSER_HEADERS = {
   'Upgrade-Insecure-Requests': '1',
 };
 
+/** Strip stray trailing ":" from target URL (bad client/query encoding). Never strips ":" from "https://". */
+function normalizeScrapeUrl(href) {
+  const s = String(href ?? '').trim();
+  if (!s) return s;
+  let out = s;
+  while (out.endsWith(':')) {
+    if (out.endsWith('://')) break;
+    out = out.slice(0, -1).trimEnd();
+  }
+  return out;
+}
+
 function authMiddleware(req, res, next) {
   const authHeader = req.headers['authorization'];
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -45,8 +57,12 @@ app.get('/health', (_req, res) => {
 });
 
 app.get('/fetch', authMiddleware, async (req, res) => {
-  const { url } = req.query;
-  if (!url || typeof url !== 'string') {
+  const raw = req.query.url;
+  if (raw == null || typeof raw !== 'string' || !String(raw).trim()) {
+    return res.status(400).json({ error: 'url query param required' });
+  }
+  const url = normalizeScrapeUrl(raw);
+  if (!url) {
     return res.status(400).json({ error: 'url query param required' });
   }
 
