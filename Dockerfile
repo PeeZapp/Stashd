@@ -10,6 +10,8 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
+ENV NODE_ENV=production
 EXPOSE 10000
 
-CMD ["npm", "start"]
+# Run node as PID 1 (not `npm start`) so Render deploy SIGTERM does not surface as npm "command failed" noise.
+CMD ["node", "server/proxy.js"]
