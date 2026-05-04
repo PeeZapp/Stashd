@@ -44,6 +44,28 @@ export interface ListProduct {
   added_at: string;
 }
 
+/** Curated looks: owned products + optional photos (e.g. mirror selfies). */
+export interface Outfit {
+  id: string;
+  user_id: string;
+  name: string;
+  image_urls: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OutfitProduct {
+  id: string;
+  user_id: string;
+  outfit_id: string;
+  product_id: string;
+  added_at: string;
+}
+
+export interface OutfitWithProducts extends Outfit {
+  products: Product[];
+}
+
 export interface Notification {
   id: string;
   user_id: string;

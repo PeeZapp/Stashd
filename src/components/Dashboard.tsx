@@ -1,15 +1,31 @@
-import { useState, useEffect } from 'react';
-import { Plus, ShoppingBag, LogOut, ArrowLeft, Share2, RefreshCw, Info, GitCompare, Bookmark, X, User } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import {
+  Plus,
+  ShoppingBag,
+  LogOut,
+  ArrowLeft,
+  Share2,
+  RefreshCw,
+  Info,
+  GitCompare,
+  Bookmark,
+  X,
+  User,
+  Sparkles,
+  Camera,
+} from 'lucide-react';
 import { usePlaywrightStatus } from '../hooks/usePlaywrightStatus';
 import { useProxyStatus } from '../hooks/useProxyStatus';
 import { useAuth } from '../contexts/AuthContext';
 import { refreshProduct } from '../lib/refreshProduct';
-import type { Product, List } from '../lib/types';
+import type { Product, List, Outfit } from '../lib/types';
 import {
   createList,
+  createOutfit,
   deleteList,
   deleteProduct,
   getUserListsWithProducts,
+  getUserOutfitsWithProducts,
   updateList,
 } from '../lib/firestore';
 import ProductCard from './ProductCard';
@@ -19,8 +35,9 @@ import ListCard, { type ListWithProducts } from './ListCard';
 import NotificationsPanel from './NotificationsPanel';
 import CompareModal from './CompareModal';
 import BookmarkletModal from './BookmarkletModal';
+import OutfitModal from './OutfitModal';
 
-type View = { type: 'lists' } | { type: 'list-detail'; listId: string };
+type View = { type: 'lists' } | { type: 'list-detail'; listId: string; ownedOnly?: boolean };
 type DashboardTab = 'wishlists' | 'owned';
 
 interface DashboardProps {
@@ -31,6 +48,9 @@ interface DashboardProps {
 export default function Dashboard({ prefillUrl, onNavigateToProfile }: DashboardProps) {
   const { signOut, profile, user } = useAuth();
   const [listsWithProducts, setListsWithProducts] = useState<ListWithProducts[]>([]);
+  const [outfitsWithProducts, setOutfitsWithProducts] = useState<
+    Array<{ outfit: Outfit; products: Product[] }>
+  >([]);
   const [allLists, setAllLists] = useState<List[]>([]);
   const [view, setView] = useState<View>({ type: 'lists' });
   const [dashboardTab, setDashboardTab] = useState<DashboardTab>('wishlists');
@@ -101,10 +121,23 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
   const [compareMode, setCompareMode] = useState(false);
   const [selectedForCompare, setSelectedForCompare] = useState<string[]>([]);
   const [showCompareModal, setShowCompareModal] = useState(false);
+  const [outfitEditor, setOutfitEditor] = useState<{
+    outfit: Outfit;
+    products: Product[];
+  } | null>(null);
 
   useEffect(() => {
     loadData();
   }, []);
+
+  useEffect(() => {
+    setOutfitEditor((prev) => {
+      if (!prev) return prev;
+      const match = outfitsWithProducts.find(({ outfit }) => outfit.id === prev.outfit.id);
+      if (match) return match;
+      return null;
+    });
+  }, [outfitsWithProducts]);
 
   const loadData = async () => {
     setLoading(true);
@@ -115,8 +148,12 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
   const loadLists = async () => {
     if (!user) return;
     try {
-      const data = await getUserListsWithProducts(user.uid);
+      const [data, outfits] = await Promise.all([
+        getUserListsWithProducts(user.uid),
+        getUserOutfitsWithProducts(user.uid),
+      ]);
       setListsWithProducts(data);
+      setOutfitsWithProducts(outfits);
       setAllLists(data.map(({ products: _p, ...l }) => l as List));
     } catch (error) {
       console.error('Error loading lists:', error);
@@ -203,6 +240,17 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
     await loadData();
   };
 
+  const handleNewOutfit = async () => {
+    if (!user) return;
+    try {
+      const outfit = await createOutfit({ user_id: user.uid, name: 'New outfit' });
+      await loadLists();
+      setOutfitEditor({ outfit, products: [] });
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
   const handleRefreshAll = async () => {
     if (!user || refreshingAll) return;
     setRefreshingAll(true);
@@ -276,26 +324,55 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
 
   // ── Derived data ──────────────────────────────────────────
 
-  const activeList =
+  const fullList =
     view.type === 'list-detail'
       ? listsWithProducts.find((l) => l.id === view.listId) ?? null
       : null;
 
-  // Owned tab: lists with at least one owned product, filtered to owned-only products
-  const ownedListsWithProducts: ListWithProducts[] = listsWithProducts
-    .map((list) => ({ ...list, products: list.products.filter((p) => p.is_owned ?? false) }))
-    .filter((list) => list.products.length > 0);
+  const displayList =
+    fullList && view.type === 'list-detail' && view.ownedOnly
+      ? { ...fullList, products: fullList.products.filter((p) => p.is_owned) }
+      : fullList;
 
-  const totalOwnedItems = ownedListsWithProducts.reduce((s, l) => s + l.products.length, 0);
-  const totalOwnedValue = ownedListsWithProducts.reduce(
-    (s, l) => s + l.products.reduce((ps, p) => ps + (p.current_price ?? 0), 0),
-    0
-  );
+  /** Owned items across all lists (for outfits picker) — not deleted when an outfit is removed. */
+  const stashProducts = useMemo(() => {
+    const m = new Map<string, Product>();
+    listsWithProducts.forEach((list) => {
+      list.products.forEach((p) => {
+        if (p.is_owned) m.set(p.id, p);
+      });
+    });
+    return [...m.values()];
+  }, [listsWithProducts]);
 
-  // Products in compare selection
-  const compareProducts = activeList?.products.filter((p) =>
-    selectedForCompare.includes(p.id)
-  ) ?? [];
+  const totalOwnedItems = useMemo(() => {
+    const seen = new Set<string>();
+    listsWithProducts.forEach((list) => {
+      list.products.forEach((p) => {
+        if (p.is_owned) seen.add(p.id);
+      });
+    });
+    return seen.size;
+  }, [listsWithProducts]);
+
+  const totalOwnedValue = useMemo(() => {
+    const priceByProduct = new Map<string, number>();
+    listsWithProducts.forEach((list) => {
+      list.products.forEach((p) => {
+        if (p.is_owned && p.current_price != null) {
+          priceByProduct.set(p.id, p.current_price);
+        }
+      });
+    });
+    let s = 0;
+    priceByProduct.forEach((v) => {
+      s += v;
+    });
+    return s;
+  }, [listsWithProducts]);
+
+  const compareProducts =
+    displayList?.products.filter((p) => selectedForCompare.includes(p.id)) ?? [];
 
   // ── Nav bar ───────────────────────────────────────────────
 
@@ -365,9 +442,9 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
 
   // ── List detail view ──────────────────────────────────────
 
-  if (view.type === 'list-detail' && activeList) {
-    const hasSale = activeList.products.some((p) => p.is_on_sale);
-    const total = activeList.products.reduce((s, p) => s + (p.current_price ?? 0), 0);
+  if (view.type === 'list-detail' && fullList && displayList) {
+    const hasSale = displayList.products.some((p) => p.is_on_sale);
+    const total = displayList.products.reduce((s, p) => s + (p.current_price ?? 0), 0);
 
     return (
       <div className="min-h-screen bg-gray-50">
@@ -375,9 +452,19 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
         <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
             <div>
-              <h1 className="text-3xl font-bold text-gray-900 mb-1">{activeList.name}</h1>
+              <h1 className="text-3xl font-bold text-gray-900 mb-1">{fullList.name}</h1>
+              {view.ownedOnly && (
+                <p className="text-sm text-amber-900 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 mb-2 max-w-xl">
+                  Your stash in this list: only products you marked <strong>I own this</strong>. Use Wishlists to add items, then mark them owned.
+                </p>
+              )}
               <div className="flex flex-wrap items-center gap-3 text-gray-500 text-sm">
-                <span>{activeList.products.length} item{activeList.products.length !== 1 ? 's' : ''}</span>
+                <span>
+                  {displayList.products.length} item{displayList.products.length !== 1 ? 's' : ''}
+                  {view.ownedOnly && fullList.products.length !== displayList.products.length
+                    ? ` (${fullList.products.length} on list)`
+                    : ''}
+                </span>
                 {total > 0 && (
                   <>
                     <span>·</span>
@@ -394,7 +481,7 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
             </div>
 
             <div className="flex items-center gap-2 flex-wrap">
-              {activeList.products.length >= 2 && (
+              {displayList.products.length >= 2 && (
                 <button
                   onClick={() => {
                     setCompareMode((m) => !m);
@@ -411,11 +498,11 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
                 </button>
               )}
               <button
-                onClick={() => handleShareList(activeList)}
+                onClick={() => handleShareList(fullList)}
                 className="flex items-center space-x-2 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium"
               >
                 <Share2 className="w-4 h-4" />
-                <span>{activeList.is_shared ? 'Copy share link' : 'Share list'}</span>
+                <span>{fullList.is_shared ? 'Copy share link' : 'Share list'}</span>
               </button>
             </div>
           </div>
@@ -439,11 +526,15 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
             </div>
           )}
 
-          {activeList.products.length === 0 ? (
+          {displayList.products.length === 0 ? (
             <div className="text-center py-20">
               <ShoppingBag className="w-16 h-16 text-gray-300 mx-auto mb-4" />
               <h3 className="text-xl font-semibold text-gray-900 mb-2">No products in this list</h3>
-              <p className="text-gray-600 mb-6">Add products and assign them to this list</p>
+              <p className="text-gray-600 mb-6">
+                {view.ownedOnly
+                  ? 'Mark items you own from your wishlists, or switch to Wishlists to add products.'
+                  : 'Add products and assign them to this list'}
+              </p>
               <button
                 onClick={() => setShowAddProduct(true)}
                 className="px-6 py-3 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors inline-flex items-center space-x-2"
@@ -454,7 +545,7 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-              {activeList.products.map((product) => (
+              {displayList.products.map((product) => (
                 <ProductCard
                   key={product.id}
                   product={product}
@@ -465,6 +556,7 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
                   compareMode={compareMode}
                   isSelectedForCompare={selectedForCompare.includes(product.id)}
                   onToggleCompare={() => toggleCompare(product.id)}
+                  hideOwned={Boolean(view.ownedOnly)}
                 />
               ))}
             </div>
@@ -496,6 +588,17 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
               handleDeleteProduct(selectedProduct.id);
               setSelectedProduct(null);
             }}
+          />
+        )}
+
+        {user && outfitEditor && (
+          <OutfitModal
+            userId={user.uid}
+            outfit={outfitEditor.outfit}
+            stashProducts={stashProducts}
+            linkedProducts={outfitEditor.products}
+            onClose={() => setOutfitEditor(null)}
+            onChanged={() => void loadLists()}
           />
         )}
       </div>
@@ -539,7 +642,7 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
                 </button>
               </div>
             )}
-            {dashboardTab === 'wishlists' && (
+            {(dashboardTab === 'wishlists' || dashboardTab === 'owned') && (
               <button
                 onClick={() => setCreatingList(true)}
                 className="flex items-center space-x-2 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium"
@@ -605,44 +708,49 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
           </button>
         </div>
 
+        {creatingList && (
+          <div className="mb-6">
+            <form
+              onSubmit={handleCreateList}
+              className="bg-white rounded-xl border border-gray-200 p-4 flex items-center space-x-3"
+            >
+              <input
+                type="text"
+                value={newListName}
+                onChange={(e) => {
+                  setNewListName(e.target.value);
+                  setCreateListError('');
+                }}
+                placeholder={dashboardTab === 'owned' ? 'e.g. Summer clothes' : 'List name'}
+                autoFocus
+                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent text-sm"
+              />
+              <button
+                type="submit"
+                disabled={!newListName.trim()}
+                className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium transition-colors"
+              >
+                Create
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setCreatingList(false);
+                  setNewListName('');
+                  setCreateListError('');
+                }}
+                className="px-3 py-2 text-gray-500 hover:text-gray-700 text-sm transition-colors"
+              >
+                Cancel
+              </button>
+            </form>
+            {createListError && <p className="mt-2 text-sm text-red-600 px-1">{createListError}</p>}
+          </div>
+        )}
+
         {/* ── Wishlists tab ── */}
         {dashboardTab === 'wishlists' && (
           <>
-            {creatingList && (
-              <div className="mb-6">
-                <form
-                  onSubmit={handleCreateList}
-                  className="bg-white rounded-xl border border-gray-200 p-4 flex items-center space-x-3"
-                >
-                  <input
-                    type="text"
-                    value={newListName}
-                    onChange={(e) => { setNewListName(e.target.value); setCreateListError(''); }}
-                    placeholder="List name"
-                    autoFocus
-                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent text-sm"
-                  />
-                  <button
-                    type="submit"
-                    disabled={!newListName.trim()}
-                    className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium transition-colors"
-                  >
-                    Create
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setCreatingList(false); setNewListName(''); setCreateListError(''); }}
-                    className="px-3 py-2 text-gray-500 hover:text-gray-700 text-sm transition-colors"
-                  >
-                    Cancel
-                  </button>
-                </form>
-                {createListError && (
-                  <p className="mt-2 text-sm text-red-600 px-1">{createListError}</p>
-                )}
-              </div>
-            )}
-
             {loading ? (
               <div className="text-center py-12">
                 <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900" />
@@ -692,40 +800,108 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
         {/* ── Owned tab ── */}
         {dashboardTab === 'owned' && (
           <>
-            {ownedListsWithProducts.length === 0 ? (
-              <div className="text-center py-20">
-                <ShoppingBag className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                <h3 className="text-xl font-semibold text-gray-900 mb-2">Your wardrobe is empty</h3>
-                <p className="text-gray-600 mb-2">
-                  When you buy something from your wishlist, tap <strong>I bought this</strong> on the product card to move it here.
-                </p>
-                <p className="text-sm text-gray-400">This is your virtual inventory — everything you actually own.</p>
+            {loading ? (
+              <div className="text-center py-12">
+                <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900" />
               </div>
             ) : (
               <>
-                <div className="mb-5 flex items-center justify-between">
-                  <p className="text-sm text-gray-500">
-                    {totalOwnedItems} item{totalOwnedItems !== 1 ? 's' : ''} owned
-                    {totalOwnedValue > 0 && (
-                      <span className="ml-2 font-semibold text-gray-900">${totalOwnedValue.toFixed(2)} total value</span>
-                    )}
-                  </p>
+                <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <p className="text-sm text-gray-500 mb-1">
+                      {totalOwnedItems} piece{totalOwnedItems !== 1 ? 's' : ''} in your stash
+                      {totalOwnedValue > 0 && (
+                        <span className="ml-2 font-semibold text-gray-900">~${totalOwnedValue.toFixed(2)} value</span>
+                      )}
+                    </p>
+                    <p className="text-xs text-gray-400 max-w-xl">
+                      Create lists (e.g. summer clothes), curate outfits from your stash, and add photos of your looks.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void handleNewOutfit()}
+                    className="flex items-center space-x-2 px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 text-sm font-medium shrink-0"
+                  >
+                    <Sparkles className="w-4 h-4" />
+                    <span>New outfit</span>
+                  </button>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                  {ownedListsWithProducts.flatMap((list) =>
-                    list.products.map((product) => (
-                      <ProductCard
-                        key={product.id}
-                        product={product}
-                        onClick={() => setSelectedProduct(product)}
-                        onDelete={() => handleDeleteProduct(product.id)}
-                        onPriceUpdate={updateProductInState}
-                        onMarkOwned={updateProductInState}
-                        hideOwned
-                      />
-                    ))
+
+                <div className="mb-8">
+                  <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2">
+                    <Sparkles className="w-3.5 h-3.5" />
+                    Outfits
+                  </h2>
+                  {outfitsWithProducts.length === 0 ? (
+                    <p className="text-sm text-gray-500 mb-4">
+                      No outfits yet. Create one, pick pieces from your stash, and upload mirror pics or inspo shots.
+                    </p>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 mb-2">
+                      {outfitsWithProducts.map(({ outfit, products }) => {
+                        const cover =
+                          outfit.image_urls[0] ?? products.find((p) => p.image_url)?.image_url ?? null;
+                        return (
+                          <button
+                            key={outfit.id}
+                            type="button"
+                            onClick={() => setOutfitEditor({ outfit, products })}
+                            className="text-left bg-white rounded-2xl border border-gray-200 overflow-hidden hover:shadow-lg transition-shadow"
+                          >
+                            <div className="aspect-[4/3] bg-gray-100 relative">
+                              {cover ? (
+                                <img src={cover} alt="" className="w-full h-full object-cover" />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center">
+                                  <Camera className="w-12 h-12 text-gray-300" />
+                                </div>
+                              )}
+                            </div>
+                            <div className="p-4">
+                              <h3 className="font-semibold text-gray-900 line-clamp-1">{outfit.name}</h3>
+                              <p className="text-xs text-gray-500 mt-1">
+                                {products.length} piece{products.length !== 1 ? 's' : ''}
+                                {outfit.image_urls.length > 0
+                                  ? ` · ${outfit.image_urls.length} photo${outfit.image_urls.length !== 1 ? 's' : ''}`
+                                  : ''}
+                              </p>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
                   )}
                 </div>
+
+                <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Lists</h2>
+                {listsWithProducts.length === 0 && !creatingList ? (
+                  <div className="text-center py-16 border border-dashed border-gray-200 rounded-2xl">
+                    <ShoppingBag className="w-14 h-14 text-gray-300 mx-auto mb-3" />
+                    <h3 className="text-lg font-semibold text-gray-900 mb-2">Organize your stash</h3>
+                    <p className="text-gray-600 text-sm max-w-md mx-auto mb-2">
+                      Create a list (e.g. <em>Summer clothes</em>), save products from any shop, then tap{' '}
+                      <strong>I own this</strong> on each card once it is in your closet.
+                    </p>
+                    <p className="text-sm text-gray-400">
+                      When you buy from a wishlist, use the same button — owned items show up here under that list.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                    {listsWithProducts.map((list) => (
+                      <ListCard
+                        key={list.id}
+                        list={list}
+                        displayMode="owned"
+                        onClick={() => setView({ type: 'list-detail', listId: list.id, ownedOnly: true })}
+                        onDelete={() => handleDeleteList(list.id)}
+                        onShare={() => handleShareList(list)}
+                        onRename={(newName) => handleRenameList(list.id, newName)}
+                      />
+                    ))}
+                  </div>
+                )}
               </>
             )}
           </>
@@ -753,6 +929,17 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
             handleDeleteProduct(selectedProduct.id);
             setSelectedProduct(null);
           }}
+        />
+      )}
+
+      {user && outfitEditor && (
+        <OutfitModal
+          userId={user.uid}
+          outfit={outfitEditor.outfit}
+          stashProducts={stashProducts}
+          linkedProducts={outfitEditor.products}
+          onClose={() => setOutfitEditor(null)}
+          onChanged={() => void loadLists()}
         />
       )}
     </div>

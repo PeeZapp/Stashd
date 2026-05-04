@@ -16,7 +16,16 @@ import {
 } from 'firebase/firestore';
 import { db } from './firebase';
 import { normalizeShareToken } from './shareLink';
-import type { List, ListProduct, Notification, PriceSource, Product, Profile } from './types';
+import type {
+  List,
+  ListProduct,
+  Notification,
+  Outfit,
+  OutfitProduct,
+  PriceSource,
+  Product,
+  Profile,
+} from './types';
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -77,6 +86,28 @@ function mapListProduct(id: string, data: DocumentData): ListProduct {
     id,
     user_id: data.user_id as string,
     list_id: data.list_id as string,
+    product_id: data.product_id as string,
+    added_at: asIso(data.added_at),
+  };
+}
+
+function mapOutfit(id: string, data: DocumentData): Outfit {
+  const urls = data.image_urls;
+  return {
+    id,
+    user_id: data.user_id as string,
+    name: (data.name as string) ?? '',
+    image_urls: Array.isArray(urls) ? (urls as string[]).filter((u) => typeof u === 'string') : [],
+    created_at: asIso(data.created_at),
+    updated_at: asIso(data.updated_at),
+  };
+}
+
+function mapOutfitProduct(id: string, data: DocumentData): OutfitProduct {
+  return {
+    id,
+    user_id: data.user_id as string,
+    outfit_id: data.outfit_id as string,
     product_id: data.product_id as string,
     added_at: asIso(data.added_at),
   };
@@ -425,19 +456,136 @@ export function subscribeToNotifications(
   });
 }
 
+// ── Outfits (curated looks: links to owned stash products + user photos; deleteOutfit does not delete products) ──
+
+export async function getUserOutfits(userId: string): Promise<Outfit[]> {
+  const snap = await getDocs(query(collection(db, 'outfits'), where('user_id', '==', userId)));
+  return snap.docs
+    .map((d) => mapOutfit(d.id, d.data()))
+    .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+}
+
+export async function createOutfit(params: { user_id: string; name: string }): Promise<Outfit> {
+  const ref = await addDoc(collection(db, 'outfits'), {
+    user_id: params.user_id,
+    name: params.name,
+    image_urls: [],
+    created_at: serverTimestamp(),
+    updated_at: serverTimestamp(),
+  });
+  const snap = await getDoc(ref);
+  return mapOutfit(snap.id, snap.data() ?? params);
+}
+
+export async function updateOutfit(
+  outfitId: string,
+  updates: Partial<Pick<Outfit, 'name' | 'image_urls'>>
+): Promise<void> {
+  await setDoc(
+    doc(db, 'outfits', outfitId),
+    {
+      ...updates,
+      updated_at: serverTimestamp(),
+    },
+    { merge: true }
+  );
+}
+
+export async function deleteOutfit(outfitId: string, userId: string): Promise<void> {
+  const rowsSnap = await getDocs(
+    query(
+      collection(db, 'outfit_products'),
+      where('outfit_id', '==', outfitId),
+      where('user_id', '==', userId)
+    )
+  );
+  const batch = writeBatch(db);
+  rowsSnap.docs.forEach((d) => batch.delete(d.ref));
+  batch.delete(doc(db, 'outfits', outfitId));
+  await batch.commit();
+}
+
+export async function getOutfitProductRows(outfitId: string, userId: string): Promise<OutfitProduct[]> {
+  const snap = await getDocs(
+    query(
+      collection(db, 'outfit_products'),
+      where('outfit_id', '==', outfitId),
+      where('user_id', '==', userId)
+    )
+  );
+  return snap.docs.map((d) => mapOutfitProduct(d.id, d.data()));
+}
+
+export async function addProductToOutfit(params: {
+  user_id: string;
+  outfit_id: string;
+  product_id: string;
+}): Promise<void> {
+  const existing = await getOutfitProductRows(params.outfit_id, params.user_id);
+  if (existing.some((row) => row.product_id === params.product_id)) return;
+  await addDoc(collection(db, 'outfit_products'), {
+    ...params,
+    added_at: serverTimestamp(),
+  });
+}
+
+export async function removeProductFromOutfit(params: {
+  user_id: string;
+  outfit_id: string;
+  product_id: string;
+}): Promise<void> {
+  const rows = await getOutfitProductRows(params.outfit_id, params.user_id);
+  const batch = writeBatch(db);
+  rows
+    .filter((row) => row.product_id === params.product_id)
+    .forEach((row) => batch.delete(doc(db, 'outfit_products', row.id)));
+  await batch.commit();
+}
+
+export async function getUserOutfitsWithProducts(userId: string): Promise<
+  Array<{ outfit: Outfit; products: Product[] }>
+> {
+  const outfits = await getUserOutfits(userId);
+  if (outfits.length === 0) return [];
+  const rowsSnap = await getDocs(
+    query(collection(db, 'outfit_products'), where('user_id', '==', userId))
+  );
+  const byOutfit = new Map<string, string[]>();
+  rowsSnap.docs.forEach((d) => {
+    const row = d.data();
+    const oid = row.outfit_id as string;
+    const pid = row.product_id as string;
+    byOutfit.set(oid, [...(byOutfit.get(oid) ?? []), pid]);
+  });
+  const productIds = [...new Set(rowsSnap.docs.map((d) => d.data().product_id as string))];
+  const products = await getProductsByIds(productIds);
+  const productsById = new Map(products.map((p) => [p.id, p]));
+  return outfits.map((outfit) => ({
+    outfit,
+    products: (byOutfit.get(outfit.id) ?? [])
+      .map((id) => productsById.get(id))
+      .filter((p): p is Product => Boolean(p)),
+  }));
+}
+
 export async function deleteAllUserData(userId: string): Promise<void> {
-  const [productsSnap, listsSnap, listProductsSnap, notificationsSnap] = await Promise.all([
-    getDocs(query(collection(db, 'products'), where('user_id', '==', userId))),
-    getDocs(query(collection(db, 'lists'), where('user_id', '==', userId))),
-    getDocs(query(collection(db, 'list_products'), where('user_id', '==', userId))),
-    getDocs(query(collection(db, 'notifications'), where('user_id', '==', userId))),
-  ]);
+  const [productsSnap, listsSnap, listProductsSnap, notificationsSnap, outfitsSnap, outfitProductsSnap] =
+    await Promise.all([
+      getDocs(query(collection(db, 'products'), where('user_id', '==', userId))),
+      getDocs(query(collection(db, 'lists'), where('user_id', '==', userId))),
+      getDocs(query(collection(db, 'list_products'), where('user_id', '==', userId))),
+      getDocs(query(collection(db, 'notifications'), where('user_id', '==', userId))),
+      getDocs(query(collection(db, 'outfits'), where('user_id', '==', userId))),
+      getDocs(query(collection(db, 'outfit_products'), where('user_id', '==', userId))),
+    ]);
 
   const batch = writeBatch(db);
   productsSnap.docs.forEach((d) => batch.delete(d.ref));
   listsSnap.docs.forEach((d) => batch.delete(d.ref));
   listProductsSnap.docs.forEach((d) => batch.delete(d.ref));
   notificationsSnap.docs.forEach((d) => batch.delete(d.ref));
+  outfitProductsSnap.docs.forEach((d) => batch.delete(d.ref));
+  outfitsSnap.docs.forEach((d) => batch.delete(d.ref));
   batch.delete(doc(db, 'profiles', userId));
   await batch.commit();
 }

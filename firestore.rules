@@ -18,6 +18,12 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/products/$(productId)).data.user_id == request.auth.uid;
     }
 
+    function isOutfitOwnerForCreate(outfitId) {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/outfits/$(outfitId))
+        && get(/databases/$(database)/documents/outfits/$(outfitId)).data.user_id == request.auth.uid;
+    }
+
     match /profiles/{userId} {
       allow read, create, update: if isSignedIn() && request.auth.uid == userId;
       allow delete: if isSignedIn() && request.auth.uid == userId;
@@ -58,6 +64,23 @@ service cloud.firestore {
         && request.auth.uid == resource.data.user_id;
       allow create: if isSignedIn()
         && request.resource.data.user_id == request.auth.uid;
+    }
+
+    match /outfits/{outfitId} {
+      allow read, update, delete: if isSignedIn()
+        && resource.data.user_id == request.auth.uid;
+      allow create: if isSignedIn()
+        && request.resource.data.user_id == request.auth.uid;
+    }
+
+    match /outfit_products/{rowId} {
+      allow read, delete: if isSignedIn()
+        && resource.data.user_id == request.auth.uid;
+      allow create: if isSignedIn()
+        && request.resource.data.user_id == request.auth.uid
+        && isOutfitOwnerForCreate(request.resource.data.outfit_id)
+        && isProductOwnerForCreate(request.resource.data.product_id);
+      allow update: if false;
     }
   }
 }

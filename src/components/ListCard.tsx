@@ -8,14 +8,24 @@ export interface ListWithProducts extends List {
 
 interface ListCardProps {
   list: ListWithProducts;
+  /** When `owned`, stats and cover use only items marked owned (your stash view). */
+  displayMode?: 'all' | 'owned';
   onClick: () => void;
   onDelete: () => void;
   onShare: () => void;
   onRename?: (newName: string) => void;
 }
 
-export default function ListCard({ list, onClick, onDelete, onShare, onRename }: ListCardProps) {
-  const { products } = list;
+export default function ListCard({
+  list,
+  displayMode = 'all',
+  onClick,
+  onDelete,
+  onShare,
+  onRename,
+}: ListCardProps) {
+  const products =
+    displayMode === 'owned' ? list.products.filter((p) => p.is_owned) : list.products;
   const [editingName, setEditingName] = useState(false);
   const [nameInput, setNameInput] = useState(list.name);
   const inputRef = useRef<HTMLInputElement>(null);
