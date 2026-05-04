@@ -76,7 +76,13 @@ function normalizeResidentialProxyBase(raw) {
 /** First path segment like `en-au` → `en-AU,en;q=0.9` (helps LEGO / regional Akamai). */
 function inferAcceptLanguageFromUrl(urlStr) {
   try {
-    const first = new URL(urlStr).pathname.split('/').filter(Boolean)[0] || '';
+    const u = new URL(urlStr);
+    const host = u.hostname.toLowerCase();
+    // Paths like /product/... (no /en-au/) — still AU retail
+    if (host.endsWith('.com.au')) {
+      return 'en-AU,en;q=0.9,en-US;q=0.8';
+    }
+    const first = u.pathname.split('/').filter(Boolean)[0] || '';
     const m = /^([a-z]{2})-([a-z]{2})$/i.exec(first);
     if (m) {
       const tag = `${m[1].toLowerCase()}-${m[2].toUpperCase()}`;
@@ -90,7 +96,9 @@ function inferAcceptLanguageFromUrl(urlStr) {
 
 function inferPlaywrightLocale(urlStr) {
   try {
-    const first = new URL(urlStr).pathname.split('/').filter(Boolean)[0] || '';
+    const u = new URL(urlStr);
+    if (u.hostname.toLowerCase().endsWith('.com.au')) return 'en-AU';
+    const first = u.pathname.split('/').filter(Boolean)[0] || '';
     const m = /^([a-z]{2})-([a-z]{2})$/i.exec(first);
     if (m) return `${m[1].toLowerCase()}-${m[2].toUpperCase()}`;
   } catch {

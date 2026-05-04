@@ -43,7 +43,12 @@ function normalizeScrapeUrl(href) {
 /** Match server/proxy.js — first segment `en-au` → regional Accept-Language for LEGO / Akamai. */
 function inferAcceptLanguageFromUrl(urlStr) {
   try {
-    const first = new URL(urlStr).pathname.split('/').filter(Boolean)[0] || '';
+    const u = new URL(urlStr);
+    const host = u.hostname.toLowerCase();
+    if (host.endsWith('.com.au')) {
+      return 'en-AU,en;q=0.9,en-US;q=0.8';
+    }
+    const first = u.pathname.split('/').filter(Boolean)[0] || '';
     const m = /^([a-z]{2})-([a-z]{2})$/i.exec(first);
     if (m) {
       const tag = `${m[1].toLowerCase()}-${m[2].toUpperCase()}`;
