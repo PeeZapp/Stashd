@@ -3,6 +3,7 @@ import OpenAI from 'openai';
 import { chromium as chromiumCore } from 'playwright-core';
 import { chromium as chromiumExtra } from 'playwright-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
+import { gotScraping } from 'got-scraping';
 import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -120,6 +121,44 @@ function buildBrowserHeadersForUrl(urlStr) {
     ...BROWSER_HEADERS,
     'Accept-Language': inferAcceptLanguageFromUrl(urlStr),
   };
+}
+
+/**
+ * HTTP fetch that mimics real Chrome (header ordering, h2 frame order, TLS preferences)
+ * via got-scraping, which is significantly harder for CDNs to fingerprint than Node `fetch`.
+ * Falls back to native fetch if got-scraping fails to initialize for any reason.
+ */
+async function fetchHtmlImpersonated(url, { timeoutMs = 15_000 } = {}) {
+  try {
+    const res = await gotScraping({
+      url,
+      timeout: { request: timeoutMs },
+      throwHttpErrors: false,
+      followRedirect: true,
+      decompress: true,
+      responseType: 'text',
+      headerGeneratorOptions: {
+        browsers: [{ name: 'chrome', minVersion: 120 }],
+        devices: ['desktop'],
+        operatingSystems: ['windows', 'macos'],
+      },
+      headers: {
+        'Accept-Language': inferAcceptLanguageFromUrl(url),
+        Referer: new URL(url).origin + '/',
+      },
+    });
+    const body = typeof res.body === 'string' ? res.body : String(res.body ?? '');
+    return { status: res.statusCode ?? 0, body };
+  } catch (gotErr) {
+    console.warn(`[fetch] got-scraping failed (${gotErr.message}); falling back to node fetch`);
+    const response = await fetch(url, {
+      headers: { ...buildBrowserHeadersForUrl(url), Referer: new URL(url).origin + '/' },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    const body = await response.text();
+    return { status: response.status, body };
+  }
 }
 
 // ── Playwright browser singleton ────────────────────────────
@@ -276,29 +315,61 @@ process.on('exit', () => { if (_browser) _browser.close().catch(() => {}); });
 process.on('SIGTERM', async () => { await closeBrowser(); process.exit(0); });
 process.on('SIGINT', async () => { await closeBrowser(); process.exit(0); });
 
-async function scrapeWithPlaywright(url) {
+const MOBILE_UA =
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Mobile/15E148 Safari/604.1';
+
+async function scrapeWithPlaywright(url, { variant = 'desktop' } = {}) {
   const bw = await getBrowser();
   const h = buildBrowserHeadersForUrl(url);
+  const isMobile = variant === 'mobile';
   const context = await bw.newContext({
-    userAgent: h['User-Agent'],
-    viewport: { width: 1440, height: 900 },
+    userAgent: isMobile ? MOBILE_UA : h['User-Agent'],
+    viewport: isMobile ? { width: 390, height: 844 } : { width: 1440, height: 900 },
+    deviceScaleFactor: isMobile ? 3 : 1,
+    isMobile: isMobile,
+    hasTouch: isMobile,
     locale: inferPlaywrightLocale(url),
     timezoneId: inferPlaywrightTimezone(url),
-    extraHTTPHeaders: {
-      Accept: h.Accept,
-      'Accept-Language': h['Accept-Language'],
-      'sec-ch-ua': h['Sec-Ch-Ua'],
-      'sec-ch-ua-mobile': h['Sec-Ch-Ua-Mobile'],
-      'sec-ch-ua-platform': h['Sec-Ch-Ua-Platform'],
-    },
+    extraHTTPHeaders: isMobile
+      ? {
+          Accept: h.Accept,
+          'Accept-Language': h['Accept-Language'],
+        }
+      : {
+          Accept: h.Accept,
+          'Accept-Language': h['Accept-Language'],
+          'sec-ch-ua': h['Sec-Ch-Ua'],
+          'sec-ch-ua-mobile': h['Sec-Ch-Ua-Mobile'],
+          'sec-ch-ua-platform': h['Sec-Ch-Ua-Platform'],
+        },
     ignoreHTTPSErrors: true,
   });
 
   const page = await context.newPage();
 
   try {
+    // Origin warm-up: visit the homepage first so cookies + challenge tokens land before the PDP.
+    try {
+      const origin = new URL(url).origin + '/';
+      if (origin !== url) {
+        await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 20_000 });
+        await new Promise((r) => setTimeout(r, 800));
+      }
+    } catch (_) {
+      // Warm-up is best-effort — proceed to PDP regardless
+    }
+
     // Navigate — luxury / big retail PDPs often need >25s on cold instances
     await page.goto(url, { waitUntil: 'load', timeout: 55_000 });
+
+    // Small human-ish movement to defeat naive automation heuristics
+    try {
+      await page.mouse.move(200, 200);
+      await page.mouse.move(500, 400, { steps: 6 });
+      await page.evaluate(() => window.scrollBy(0, 300));
+    } catch (_) {
+      // ignore
+    }
 
     // For SPA sites: wait for network to settle, with a cap
     try {
@@ -832,17 +903,13 @@ app.get(['/scrape', '/api/scrape'], async (req, res) => {
     return res.status(400).json({ error: 'url query param required' });
   }
 
-  // Step 1: fast HTTP fetch
+  // Step 1: fast HTTP fetch (Chrome-like TLS/header ordering via got-scraping)
   let html = '';
   let httpStatus = 200;
   try {
-    const response = await fetch(url, {
-      headers: { ...buildBrowserHeadersForUrl(url), Referer: new URL(url).origin + '/' },
-      redirect: 'follow',
-      signal: AbortSignal.timeout(15000),
-    });
-    httpStatus = response.status;
-    html = await response.text();
+    const r = await fetchHtmlImpersonated(url);
+    httpStatus = r.status;
+    html = r.body;
   } catch (err) {
     return res.status(502).json({ error: `Fetch failed: ${err.message}` });
   }
@@ -884,16 +951,27 @@ app.get(['/scrape', '/api/scrape'], async (req, res) => {
     } else {
       console.log(`[scrape] No product price in static HTML for ${url} — retrying with Playwright`);
     }
-    try {
-      // Enforce overall timeout on the entire Playwright operation
-      const playwrightHtml = await Promise.race([
-        scrapeWithPlaywright(url),
+    const runPlaywrightVariant = (variant) =>
+      Promise.race([
+        scrapeWithPlaywright(url, { variant }),
         new Promise((_, reject) =>
           setTimeout(() => reject(new Error('Playwright timed out')), PLAYWRIGHT_TIMEOUT_MS)
         ),
       ]);
+    try {
+      let playwrightHtml = await runPlaywrightVariant('desktop');
       if (isStillBotBlocked(playwrightHtml) && !hasLikelyProductPageHtml(playwrightHtml)) {
-        throw new Error('Bot protection persists even in headless browser');
+        console.log(`[playwright] desktop looked blocked — retrying with mobile profile`);
+        try {
+          const mobileHtml = await runPlaywrightVariant('mobile');
+          if (!isStillBotBlocked(mobileHtml) || hasLikelyProductPageHtml(mobileHtml)) {
+            playwrightHtml = mobileHtml;
+          } else {
+            throw new Error('Bot protection persists even in headless browser');
+          }
+        } catch (mobileErr) {
+          throw new Error(mobileErr.message || 'Mobile Playwright retry failed');
+        }
       }
       console.log(`[playwright] rendered ${playwrightHtml.length} bytes for ${url}`);
       html = playwrightHtml;

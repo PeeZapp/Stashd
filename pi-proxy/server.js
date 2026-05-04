@@ -1,4 +1,5 @@
 import express from 'express';
+import { gotScraping } from 'got-scraping';
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -94,19 +95,49 @@ app.get('/fetch', authMiddleware, async (req, res) => {
   }
 
   try {
-    const response = await fetch(url, {
-      headers: {
-        ...BROWSER_HEADERS,
-        'Accept-Language': inferAcceptLanguageFromUrl(url),
-        Referer: parsedUrl.origin + '/',
-        Host: parsedUrl.host,
-      },
-      redirect: 'follow',
-      signal: AbortSignal.timeout(30000),
-    });
+    // Prefer got-scraping (Chrome-like header/TLS ordering) with native fetch fallback
+    let status = 0;
+    let body = '';
+    try {
+      const r = await gotScraping({
+        url,
+        timeout: { request: 30_000 },
+        throwHttpErrors: false,
+        followRedirect: true,
+        decompress: true,
+        responseType: 'text',
+        headerGeneratorOptions: {
+          browsers: [{ name: 'chrome', minVersion: 120 }],
+          devices: ['desktop'],
+          operatingSystems: ['windows', 'macos'],
+        },
+        headers: {
+          'Accept-Language': inferAcceptLanguageFromUrl(url),
+          Referer: parsedUrl.origin + '/',
+        },
+      });
+      status = r.statusCode ?? 0;
+      body = typeof r.body === 'string' ? r.body : String(r.body ?? '');
+    } catch (gotErr) {
+      console.warn(`[pi-proxy] got-scraping failed (${gotErr.message}); falling back to node fetch`);
+      const response = await fetch(url, {
+        headers: {
+          ...BROWSER_HEADERS,
+          'Accept-Language': inferAcceptLanguageFromUrl(url),
+          Referer: parsedUrl.origin + '/',
+          Host: parsedUrl.host,
+        },
+        redirect: 'follow',
+        signal: AbortSignal.timeout(30_000),
+      });
+      status = response.status;
+      body = await response.text();
+    }
 
-    const html = await response.text();
-    res.status(200).set('Content-Type', 'text/html; charset=utf-8').send(html);
+    if (!body || body.length === 0) {
+      return res.status(502).json({ error: `Empty response (upstream status ${status})` });
+    }
+    res.status(200).set('Content-Type', 'text/html; charset=utf-8').send(body);
   } catch (err) {
     console.error(`[pi-proxy] Fetch failed for ${url}: ${err.message}`);
     res.status(502).json({ error: `Fetch failed: ${err.message}` });
