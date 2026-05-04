@@ -34,25 +34,45 @@ Vercel is a poor fit for long Playwright jobs; keep the API on Render (or simila
 
 Render’s **native Node** build environment is **read-only for `apt-get`**, so a **Build command** that runs `apt-get install chromium` **fails**. Use **Docker** instead; this repo includes a **`Dockerfile`** based on [`mcr.microsoft.com/playwright`](https://playwright.dev/docs/docker) (browsers and OS libraries already present).
 
-Render splits this into two **Settings** areas (names match the sidebar):
+#### There is no “switch to Docker” toggle on an existing Node service
+
+Render chooses **Node vs Docker when the Web Service is first created** (the wizard step where you pick **Language** — set it to **Docker** per [Render’s Docker doc](https://docs.render.com/docs/docker)). For an existing Node service, the dashboard **does not** offer a simple runtime switch.
+
+**Practical approach (recommended):** create a **new** Web Service from the same GitHub repo:
+
+1. [Dashboard](https://dashboard.render.com/) → **New +** → **Web Service**.
+2. Connect **Stashd**, branch **`main`**.
+3. In the creation wizard, open the **Language** (or **Environment**) dropdown and select **Docker** — *not* Node.
+4. **Dockerfile path:** `Dockerfile` (leave blank only if the file is at the repo root with that exact name).
+5. **Docker build context:** `.` (default).
+6. **Root Directory:** leave empty unless your app lives in a subfolder.
+7. Copy **Environment** variables from your old service (same keys/values).
+8. **Instance type:** Free (if you use it).
+9. Create the service and wait for the first deploy.
+10. Update **`VITE_SCRAPE_API_URL`** on Vercel to the **new** `https://….onrender.com` URL if the hostname changed, then delete or suspend the old Node service when you are done.
+
+**Other ways to change runtime** (advanced): [Render Blueprint](https://docs.render.com/docs/infrastructure-as-code) (`render.yaml` with `runtime: docker`) or the [Update service API](https://api-docs.render.com/reference/update-service). Most people use a **new Web Service** instead.
+
+#### After you have a Docker-based service
+
+Render still splits **Settings** into **Build** and **Deploy**:
 
 **Settings → Build**
 
 | Field | What to set |
 |--------|----------------|
-| **Environment** | **Docker** (not “Node”) |
-| **Dockerfile path** | `Dockerfile` (repo root) |
+| **Dockerfile path** | `Dockerfile` |
 | **Docker build context directory** | `.` (default) |
-| **Build command** | **Clear it** / leave empty when using Docker — the Dockerfile runs `npm ci` and `npm run build`. Do **not** leave the old `apt-get … && npm install …` line here. |
+| **Build command** | Leave **empty** for Docker — the Dockerfile runs `npm ci` and `npm run build`. Do **not** leave an old `apt-get …` line here. |
 
 **Settings → Deploy**
 
 | Field | What to set |
 |--------|----------------|
-| **Start command** | **Clear it** / leave empty when using Docker — the image **`CMD`** is already `npm start`. (`npm start` and `npm run start` are equivalent if you ever set it manually on Node.) |
+| **Start command** | Leave **empty** — the image **`CMD`** is already `npm start`. |
 | **Pre-deploy command** | Leave empty unless you add migrations later. |
 
-After saving, use **Manual Deploy → Clear build cache & deploy** so the first Docker build runs clean.
+Use **Manual Deploy → Clear build cache & deploy** after changing Docker-related settings.
 
 ### A.2b If you stay on native Node (not recommended here)
 
