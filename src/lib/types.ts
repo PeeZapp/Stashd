@@ -6,7 +6,14 @@ export interface Profile {
   email: string;
   created_at: string;
   updated_at: string;
+  /** Local hour (0–23) to run pending detailed adds once per day; `null` = off */
+  detailed_enrichment_schedule_hour: number | null;
+  /** When true, pending detailed adds may run while the tab is in the background */
+  detailed_enrichment_when_idle: boolean;
 }
+
+/** How the product was first saved from a URL */
+export type AddDetailLevel = 'quick' | 'detailed';
 
 export interface Product {
   id: string;
@@ -22,6 +29,10 @@ export interface Product {
   sku: string | null;
   price_source: PriceSource;
   is_owned: boolean;
+  /** `quick` = URL-only save; `detailed` = filled via detailed add or manual form */
+  add_detail_level: AddDetailLevel;
+  /** True for quick-add rows until a detailed add fills in the listing */
+  detailed_enrichment_pending: boolean;
   created_at: string;
   updated_at: string;
 }

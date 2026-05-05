@@ -41,12 +41,17 @@ function asIso(value: unknown): string {
 }
 
 function mapProfile(id: string, data: DocumentData): Profile {
+  const hourRaw = data.detailed_enrichment_schedule_hour;
+  const hourOk =
+    typeof hourRaw === 'number' && Number.isInteger(hourRaw) && hourRaw >= 0 && hourRaw <= 23;
   return {
     id,
     name: (data.name as string) ?? '',
     email: (data.email as string) ?? '',
     created_at: asIso(data.created_at),
     updated_at: asIso(data.updated_at),
+    detailed_enrichment_schedule_hour: hourOk ? hourRaw : null,
+    detailed_enrichment_when_idle: Boolean(data.detailed_enrichment_when_idle),
   };
 }
 
@@ -65,6 +70,8 @@ function mapProduct(id: string, data: DocumentData): Product {
     sku: (data.sku as string | null) ?? null,
     price_source: (data.price_source as PriceSource) ?? null,
     is_owned: Boolean(data.is_owned),
+    add_detail_level: data.add_detail_level === 'quick' ? 'quick' : 'detailed',
+    detailed_enrichment_pending: data.detailed_enrichment_pending === true,
     created_at: asIso(data.created_at),
     updated_at: asIso(data.updated_at),
   };
@@ -161,6 +168,24 @@ export async function updateProfileName(userId: string, name: string): Promise<v
     ref,
     {
       name,
+      updated_at: serverTimestamp(),
+    },
+    { merge: true }
+  );
+}
+
+export async function updateProfileDetailedAddSettings(
+  userId: string,
+  settings: {
+    detailed_enrichment_schedule_hour: number | null;
+    detailed_enrichment_when_idle: boolean;
+  }
+): Promise<void> {
+  const ref = doc(db, 'profiles', userId);
+  await setDoc(
+    ref,
+    {
+      ...settings,
       updated_at: serverTimestamp(),
     },
     { merge: true }
@@ -299,6 +324,18 @@ export async function addProductToList(params: {
   list_id: string;
   product_id: string;
 }): Promise<void> {
+  const [listSnap, productSnap] = await Promise.all([
+    getDoc(doc(db, 'lists', params.list_id)),
+    getDoc(doc(db, 'products', params.product_id)),
+  ]);
+  if (!listSnap.exists() || !productSnap.exists()) return;
+  const list = mapList(listSnap.id, listSnap.data() as DocumentData);
+  const product = mapProduct(productSnap.id, productSnap.data() as DocumentData);
+  if (list.scope === 'stash' && !product.is_owned) {
+    throw new Error(
+      'Stash lists are for things you own. Mark this item as owned first, or open it from the Owned tab.'
+    );
+  }
   const existing = await getListProductRows(params.list_id, params.user_id);
   if (existing.some((row) => row.product_id === params.product_id)) return;
   await addDoc(collection(db, 'list_products'), {

@@ -10,6 +10,7 @@ import {
 } from '../lib/firestore';
 import type { List } from '../lib/types';
 import { normalizeProtocolRelativeUrl } from '../lib/normalizeMediaUrl';
+import { titleFromProductUrl } from '../lib/titleFromProductUrl';
 
 interface AddProductModalProps {
   lists: List[];
@@ -43,6 +44,104 @@ const emptyForm = (sourceUrl = ''): FormData => ({
   sku: '',
   priceSource: null,
 });
+
+function AddToListsFields({
+  lists,
+  selectedListIds,
+  onToggleList,
+  pendingNewLists,
+  onRemovePendingName,
+  newListName,
+  onNewListNameChange,
+  onCommitNewListName,
+  footerHint,
+}: {
+  lists: List[];
+  selectedListIds: string[];
+  onToggleList: (listId: string) => void;
+  pendingNewLists: string[];
+  onRemovePendingName: (name: string) => void;
+  newListName: string;
+  onNewListNameChange: (value: string) => void;
+  onCommitNewListName: () => void;
+  footerHint: string;
+}) {
+  return (
+    <div className="border-t border-gray-100 pt-4">
+      <label className="block text-sm font-medium text-gray-700 mb-3">
+        Add to Lists
+        <span className="ml-1 text-xs text-gray-400">(wishlists)</span>
+      </label>
+      <p className="text-xs text-gray-500 mb-3">
+        Wishlists only here. Stash lists hold items you own — open something on the <strong>Owned</strong> tab and add
+        it there.
+      </p>
+
+      {lists.length > 0 && (
+        <div className="space-y-2 mb-3 max-h-40 overflow-y-auto">
+          {lists.map((list) => (
+            <label
+              key={list.id}
+              className="flex items-center space-x-2 p-2 hover:bg-gray-50 rounded cursor-pointer"
+            >
+              <input
+                type="checkbox"
+                checked={selectedListIds.includes(list.id)}
+                onChange={() => onToggleList(list.id)}
+                className="w-4 h-4 text-gray-900 focus:ring-gray-900 rounded"
+              />
+              <span className="text-sm text-gray-700">{list.name}</span>
+            </label>
+          ))}
+        </div>
+      )}
+
+      {pendingNewLists.length > 0 && (
+        <div className="flex flex-wrap gap-2 mb-2">
+          {pendingNewLists.map((name) => (
+            <span
+              key={name}
+              className="inline-flex items-center gap-1 px-3 py-1 bg-gray-900 text-white text-sm rounded-full"
+            >
+              {name}
+              <button
+                type="button"
+                onClick={() => onRemovePendingName(name)}
+                className="ml-0.5 hover:text-gray-300 transition-colors"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="flex space-x-2">
+        <input
+          type="text"
+          value={newListName}
+          onChange={(e) => onNewListNameChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              onCommitNewListName();
+            }
+          }}
+          className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent"
+          placeholder="Type a list name and press +"
+        />
+        <button
+          type="button"
+          disabled={!newListName.trim()}
+          onClick={onCommitNewListName}
+          className="flex items-center justify-center px-3 bg-gray-900 text-white rounded-lg hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        >
+          <Plus className="w-5 h-5" />
+        </button>
+      </div>
+      <p className="text-xs text-gray-400 mt-1">{footerHint}</p>
+    </div>
+  );
+}
 
 export default function AddProductModal({ lists, onClose, onSuccess, prefillUrl }: AddProductModalProps) {
   const { user } = useAuth();
@@ -98,7 +197,7 @@ export default function AddProductModal({ lists, onClose, onSuccess, prefillUrl 
       });
       setStep('details');
     } catch (err) {
-      console.error('Fetch error:', err);
+      console.error('Detailed add error:', err);
       setFormData(emptyForm(url));
       setError('Could not read that page automatically — please fill in the details below.');
       setStep('details');
@@ -106,13 +205,94 @@ export default function AddProductModal({ lists, onClose, onSuccess, prefillUrl 
   };
 
   useEffect(() => {
-    if (prefillUrl) handleFetchUrl();
+    if (prefillUrl) void handleFetchUrl();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only auto-run bookmarklet once
   }, []);
 
   const handleSkipToManual = () => {
     setError('');
     setFormData(emptyForm());
     setStep('details');
+  };
+
+  const handleQuickAdd = async () => {
+    const url = formData.sourceUrl.trim();
+    if (!url) {
+      setError('Please enter a URL');
+      return;
+    }
+    try {
+      new URL(url);
+    } catch {
+      setError('Please enter a valid URL (e.g. https://example.com/product)');
+      return;
+    }
+
+    if (!user) return;
+
+    const hasListChoice =
+      selectedListIds.length > 0 ||
+      pendingNewLists.length > 0 ||
+      Boolean(newListName.trim());
+    if (!hasListChoice) {
+      setError('Choose one or more lists, or type a new list name and press + before quick add.');
+      return;
+    }
+
+    setError('');
+    setLoading(true);
+
+    try {
+      const product = await createProduct({
+        user_id: user.uid,
+        title: titleFromProductUrl(url),
+        source_url: url,
+        current_price: null,
+        original_price: null,
+        is_on_sale: false,
+        image_url: null,
+        store_name: null,
+        description: null,
+        sku: null,
+        price_source: null,
+        is_owned: false,
+        add_detail_level: 'quick',
+        detailed_enrichment_pending: true,
+      });
+
+      let allListIds = [...selectedListIds];
+      const listsToCreate = [
+        ...pendingNewLists,
+        ...(newListName.trim() ? [newListName.trim()] : []),
+      ];
+      for (const name of listsToCreate) {
+        const newList = await createList({
+          user_id: user.uid,
+          name,
+          share_token: crypto.randomUUID(),
+          scope: 'wishlist',
+        });
+        allListIds = [...allListIds, newList.id];
+      }
+
+      await addProductToLists({
+        user_id: user.uid,
+        list_ids: allListIds,
+        product_id: product.id,
+      });
+
+      onSuccess();
+    } catch (err: unknown) {
+      console.error('Quick add error:', err);
+      const errObj = err as Record<string, unknown>;
+      const msg =
+        typeof errObj?.message === 'string'
+          ? errObj.message
+          : 'Failed to save link. Please try again.';
+      setError(msg);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -148,6 +328,8 @@ export default function AddProductModal({ lists, onClose, onSuccess, prefillUrl 
         sku: formData.sku.trim() || null,
         price_source: formData.priceSource,
         is_owned: false,
+        add_detail_level: 'detailed',
+        detailed_enrichment_pending: false,
       });
 
       let allListIds = [...selectedListIds];
@@ -212,6 +394,14 @@ export default function AddProductModal({ lists, onClose, onSuccess, prefillUrl 
       prev.includes(listId) ? prev.filter((id) => id !== listId) : [...prev, listId]
     );
 
+  const commitPendingNewListName = () => {
+    const name = newListName.trim();
+    if (name && !pendingNewLists.includes(name)) {
+      setPendingNewLists((prev) => [...prev, name]);
+      setNewListName('');
+    }
+  };
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-hidden">
       <div className="bg-white rounded-2xl max-w-2xl w-full p-8 relative max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-y-contain">
@@ -227,7 +417,8 @@ export default function AddProductModal({ lists, onClose, onSuccess, prefillUrl 
           <>
             <h2 className="text-2xl font-bold text-gray-900 mb-2">Add New Product</h2>
             <p className="text-sm text-gray-500 mb-6">
-              Paste a product URL and we'll fill in the details automatically.
+              Paste a link. Use <strong>Quick add</strong> to save the URL only, or{' '}
+              <strong>Detailed add</strong> to fetch title, price, and image from the page (slower).
             </p>
 
             {error && (
@@ -246,27 +437,57 @@ export default function AddProductModal({ lists, onClose, onSuccess, prefillUrl 
                   type="url"
                   value={formData.sourceUrl}
                   onChange={(e) => update('sourceUrl', e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleFetchUrl()}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      void handleFetchUrl();
+                    }
+                  }}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent"
                   placeholder="https://example.com/product"
                   autoFocus
                 />
               </div>
 
+              <AddToListsFields
+                lists={lists}
+                selectedListIds={selectedListIds}
+                onToggleList={toggleList}
+                pendingNewLists={pendingNewLists}
+                onRemovePendingName={(name) =>
+                  setPendingNewLists((prev) => prev.filter((n) => n !== name))
+                }
+                newListName={newListName}
+                onNewListNameChange={(v) => setNewListName(v)}
+                onCommitNewListName={commitPendingNewListName}
+                footerHint="Quick add needs at least one list checked or a new list queued (+). Detailed save without lists uses Uncategorised."
+              />
+
               <button
                 type="button"
-                onClick={handleFetchUrl}
-                disabled={!formData.sourceUrl.trim()}
+                onClick={() => void handleQuickAdd()}
+                disabled={!formData.sourceUrl.trim() || loading}
+                className="w-full px-4 py-3 border-2 border-gray-900 text-gray-900 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium flex items-center justify-center space-x-2"
+              >
+                <Plus className="w-4 h-4" />
+                <span>{loading ? 'Saving…' : 'Quick add (URL only)'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => void handleFetchUrl()}
+                disabled={!formData.sourceUrl.trim() || loading}
                 className="w-full px-4 py-3 bg-gray-900 text-white rounded-lg hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium flex items-center justify-center space-x-2"
               >
                 <ExternalLink className="w-4 h-4" />
-                <span>Import from URL</span>
+                <span>Detailed add</span>
               </button>
 
               <button
                 type="button"
                 onClick={handleSkipToManual}
-                className="w-full px-4 py-2 text-sm text-gray-500 hover:text-gray-700 transition-colors"
+                disabled={loading}
+                className="w-full px-4 py-2 text-sm text-gray-500 hover:text-gray-700 transition-colors disabled:opacity-50"
               >
                 Skip — enter details manually
               </button>
@@ -279,11 +500,11 @@ export default function AddProductModal({ lists, onClose, onSuccess, prefillUrl 
           <div className="flex flex-col items-center justify-center py-16 space-y-4">
             <Loader className="w-10 h-10 text-gray-900 animate-spin" />
             <p className="text-gray-700 font-medium">
-              {fetchSeconds < 8 ? 'Fetching product details…' : fetchSeconds < 20 ? 'Still working…' : 'Almost there…'}
+              {fetchSeconds < 8 ? 'Running detailed add…' : fetchSeconds < 20 ? 'Still working…' : 'Almost there…'}
             </p>
             <p className="text-sm text-gray-400 text-center max-w-xs">
               {fetchSeconds < 8
-                ? 'Reading product details from the page.'
+                ? 'Reading the product page for title, price, and image.'
                 : fetchSeconds < 20
                 ? 'This site may need a moment to load — hang tight.'
                 : 'The browser is warming up for a bot-protected site. This can take up to a minute on first use.'}
@@ -504,86 +725,19 @@ export default function AddProductModal({ lists, onClose, onSuccess, prefillUrl 
                 />
               </div>
 
-              {/* Lists */}
-              <div className="border-t pt-4">
-                <label className="block text-sm font-medium text-gray-700 mb-3">
-                  Add to Lists
-                  <span className="ml-1 text-xs text-gray-400">(optional)</span>
-                </label>
-
-                {lists.length > 0 && (
-                  <div className="space-y-2 mb-3 max-h-40 overflow-y-auto">
-                    {lists.map((list) => (
-                      <label
-                        key={list.id}
-                        className="flex items-center space-x-2 p-2 hover:bg-gray-50 rounded cursor-pointer"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={selectedListIds.includes(list.id)}
-                          onChange={() => toggleList(list.id)}
-                          className="w-4 h-4 text-gray-900 focus:ring-gray-900 rounded"
-                        />
-                        <span className="text-sm text-gray-700">{list.name}</span>
-                      </label>
-                    ))}
-                  </div>
-                )}
-
-                {pendingNewLists.length > 0 && (
-                  <div className="flex flex-wrap gap-2 mb-2">
-                    {pendingNewLists.map((name) => (
-                      <span
-                        key={name}
-                        className="inline-flex items-center gap-1 px-3 py-1 bg-gray-900 text-white text-sm rounded-full"
-                      >
-                        {name}
-                        <button
-                          type="button"
-                          onClick={() => setPendingNewLists((prev) => prev.filter((n) => n !== name))}
-                          className="ml-0.5 hover:text-gray-300 transition-colors"
-                        >
-                          <X className="w-3 h-3" />
-                        </button>
-                      </span>
-                    ))}
-                  </div>
-                )}
-                <div className="flex space-x-2">
-                  <input
-                    type="text"
-                    value={newListName}
-                    onChange={(e) => setNewListName(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        const name = newListName.trim();
-                        if (name && !pendingNewLists.includes(name)) {
-                          setPendingNewLists((prev) => [...prev, name]);
-                          setNewListName('');
-                        }
-                      }
-                    }}
-                    className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent"
-                    placeholder="Type a list name and press +"
-                  />
-                  <button
-                    type="button"
-                    disabled={!newListName.trim()}
-                    onClick={() => {
-                      const name = newListName.trim();
-                      if (name && !pendingNewLists.includes(name)) {
-                        setPendingNewLists((prev) => [...prev, name]);
-                        setNewListName('');
-                      }
-                    }}
-                    className="flex items-center justify-center px-3 bg-gray-900 text-white rounded-lg hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                  >
-                    <Plus className="w-5 h-5" />
-                  </button>
-                </div>
-                <p className="text-xs text-gray-400 mt-1">Press + or Enter to add the list, then save the product.</p>
-              </div>
+              <AddToListsFields
+                lists={lists}
+                selectedListIds={selectedListIds}
+                onToggleList={toggleList}
+                pendingNewLists={pendingNewLists}
+                onRemovePendingName={(name) =>
+                  setPendingNewLists((prev) => prev.filter((n) => n !== name))
+                }
+                newListName={newListName}
+                onNewListNameChange={(v) => setNewListName(v)}
+                onCommitNewListName={commitPendingNewListName}
+                footerHint="Press + or Enter to queue a new list. Leave everything unchecked to save into Uncategorised."
+              />
 
               <div className="flex space-x-3 pt-4">
                 <button

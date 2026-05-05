@@ -1,7 +1,7 @@
-import { useState } from 'react';
-import { ArrowLeft, User, Palette, Trash2, AlertCircle, Check, ShoppingBag } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { ArrowLeft, User, Palette, Trash2, AlertCircle, Check, ShoppingBag, Clock } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { updateProfileName } from '../lib/firestore';
+import { updateProfileDetailedAddSettings, updateProfileName } from '../lib/firestore';
 import { useTheme, THEMES } from '../contexts/ThemeContext';
 
 interface ProfilePageProps {
@@ -20,6 +20,37 @@ export default function ProfilePage({ onBack }: ProfilePageProps) {
   const [deleteInput, setDeleteInput] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
+
+  const [scheduleHour, setScheduleHour] = useState<number | null>(null);
+  const [whenIdle, setWhenIdle] = useState(false);
+  const [savingAddPrefs, setSavingAddPrefs] = useState(false);
+  const [addPrefsMsg, setAddPrefsMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  useEffect(() => {
+    if (!profile) return;
+    setScheduleHour(profile.detailed_enrichment_schedule_hour);
+    setWhenIdle(profile.detailed_enrichment_when_idle);
+  }, [profile]);
+
+  const handleSaveAddPrefs = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+    setSavingAddPrefs(true);
+    setAddPrefsMsg(null);
+    try {
+      await updateProfileDetailedAddSettings(user.uid, {
+        detailed_enrichment_schedule_hour: scheduleHour,
+        detailed_enrichment_when_idle: whenIdle,
+      });
+      await refreshProfile();
+      setAddPrefsMsg({ type: 'success', text: 'Saved.' });
+      setTimeout(() => setAddPrefsMsg(null), 3000);
+    } catch {
+      setAddPrefsMsg({ type: 'error', text: 'Could not save. Try again.' });
+    } finally {
+      setSavingAddPrefs(false);
+    }
+  };
 
   const handleSaveUsername = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -108,6 +139,68 @@ export default function ProfilePage({ onBack }: ProfilePageProps) {
               className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {savingUsername ? 'Saving…' : 'Save Username'}
+            </button>
+          </form>
+        </section>
+
+        {/* Quick-add → detailed add automation */}
+        <section className="bg-white rounded-2xl border border-gray-200 p-6">
+          <div className="flex items-center space-x-2 mb-2">
+            <Clock className="w-5 h-5 text-gray-500" />
+            <h2 className="text-base font-semibold text-gray-900">Detailed add for saved links</h2>
+          </div>
+          <p className="text-sm text-gray-500 mb-5">
+            Quick-add saves URLs only. Run detailed add later in bulk when you are not using the app, or pick a daily
+            time to fill in titles and prices automatically (uses your device&apos;s local time).
+          </p>
+          <form onSubmit={handleSaveAddPrefs} className="space-y-4">
+            <label className="flex items-start space-x-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={whenIdle}
+                onChange={(e) => setWhenIdle(e.target.checked)}
+                className="mt-1 w-4 h-4 text-gray-900 rounded border-gray-300"
+              />
+              <span className="text-sm text-gray-700">
+                Run pending detailed adds when this tab is in the background (about 10 seconds after you switch away)
+              </span>
+            </label>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Also run once per day around…
+              </label>
+              <select
+                value={scheduleHour === null ? '' : String(scheduleHour)}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setScheduleHour(v === '' ? null : parseInt(v, 10));
+                }}
+                className="w-full max-w-xs px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 text-sm"
+              >
+                <option value="">Off</option>
+                {Array.from({ length: 24 }, (_, h) => (
+                  <option key={h} value={String(h)}>
+                    {h === 0 ? '12:00 am' : h < 12 ? `${h}:00 am` : h === 12 ? '12:00 pm' : `${h - 12}:00 pm`}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {addPrefsMsg && (
+              <div
+                className={`flex items-center space-x-2 text-sm ${
+                  addPrefsMsg.type === 'success' ? 'text-green-700' : 'text-red-600'
+                }`}
+              >
+                {addPrefsMsg.type === 'success' ? <Check className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
+                <span>{addPrefsMsg.text}</span>
+              </div>
+            )}
+            <button
+              type="submit"
+              disabled={savingAddPrefs}
+              className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors text-sm font-medium disabled:opacity-50"
+            >
+              {savingAddPrefs ? 'Saving…' : 'Save detailed add settings'}
             </button>
           </form>
         </section>

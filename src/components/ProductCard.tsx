@@ -166,6 +166,12 @@ export default function ProductCard({
             -{discount}%
           </div>
         )}
+
+        {product.detailed_enrichment_pending && (
+          <div className="absolute bottom-3 left-3 right-3 z-10 text-center text-xs font-medium px-2 py-1 rounded-lg bg-amber-100 text-amber-900 border border-amber-200 shadow-sm">
+            Pending detailed add
+          </div>
+        )}
       </div>
 
       <div className="p-4">

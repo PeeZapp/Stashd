@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Plus,
   ShoppingBag,
@@ -11,7 +11,7 @@ import {
   Bookmark,
   X,
   User,
-  Sparkles,
+  Shirt,
   Camera,
 } from 'lucide-react';
 import { usePlaywrightStatus } from '../hooks/usePlaywrightStatus';
@@ -20,6 +20,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { refreshProduct } from '../lib/refreshProduct';
 import type { Product, List, Outfit } from '../lib/types';
 import {
+  addProductToList,
   createList,
   createOutfit,
   deleteList,
@@ -36,9 +37,11 @@ import NotificationsPanel from './NotificationsPanel';
 import CompareModal from './CompareModal';
 import BookmarkletModal from './BookmarkletModal';
 import OutfitModal from './OutfitModal';
+import { useDetailedEnrichmentRunner } from '../hooks/useDetailedEnrichmentRunner';
 
 type View = { type: 'lists' } | { type: 'list-detail'; listId: string };
 type DashboardTab = 'wishlists' | 'owned';
+type OwnedSubtab = 'stash' | 'stash-lists' | 'outfits';
 
 interface DashboardProps {
   prefillUrl?: string;
@@ -54,12 +57,14 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
   const [allLists, setAllLists] = useState<List[]>([]);
   const [view, setView] = useState<View>({ type: 'lists' });
   const [dashboardTab, setDashboardTab] = useState<DashboardTab>('wishlists');
+  const [ownedSubtab, setOwnedSubtab] = useState<OwnedSubtab>('stash');
   const [showAddProduct, setShowAddProduct] = useState(!!prefillUrl);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [loading, setLoading] = useState(true);
   const [creatingList, setCreatingList] = useState(false);
   const [newListName, setNewListName] = useState('');
   const [createListError, setCreateListError] = useState('');
+  const [selectedOwnedIdsForNewStashList, setSelectedOwnedIdsForNewStashList] = useState<string[]>([]);
   const playwrightStatus = usePlaywrightStatus();
   const proxyStatus = useProxyStatus();
 
@@ -75,13 +80,13 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
     appStatusLabel = 'App ready';
     appStatusTitle =
       proxyStatus === 'reachable'
-        ? 'Browser scrape API is ready; residential proxy (Pi) is reachable.'
-        : 'Browser scrape API is ready; Pi proxy is not configured (optional).';
+        ? 'Detailed add service is ready; residential proxy (Pi) is reachable.'
+        : 'Detailed add service is ready; Pi proxy is not configured (optional).';
   } else if (!browserLive && piUnreachable) {
     appStatusTone = 'red';
     appStatusLabel = 'App offline';
     appStatusTitle =
-      'Scrape API is not ready and the Pi/residential proxy is unreachable. Check Render and your Pi tunnel.';
+      'Detailed add service is not ready and the Pi/residential proxy is unreachable. Check Render and your Pi tunnel.';
   } else {
     appStatusTone = 'yellow';
     if (playwrightStatus === 'launching') {
@@ -91,11 +96,11 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
     } else if (browserLive && piUnreachable) {
       appStatusLabel = 'Pi offline';
       appStatusTitle =
-        'Scrape API is ready, but the residential proxy (Pi) is unreachable. Scrapes may fail on bot-protected sites.';
+        'Detailed add service is ready, but the residential proxy (Pi) is unreachable. Some sites may fail.';
     } else {
       appStatusLabel = 'Starting…';
       appStatusTitle =
-        'Waiting for the scrape API (cold start or server waking). Pi: ' +
+        'Waiting for the detailed add service (cold start or server waking). Pi: ' +
         (proxyStatus === 'unconfigured' ? 'not configured (optional).' : 'reachable.');
     }
   }
@@ -167,6 +172,39 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
     }
   };
 
+  const reloadListsRef = useRef(loadLists);
+  reloadListsRef.current = loadLists;
+
+  const wishlistListsOnly = useMemo(
+    () => allLists.filter((l) => l.scope !== 'stash'),
+    [allLists]
+  );
+
+  const pendingDetailedProducts = useMemo(() => {
+    const m = new Map<string, Product>();
+    listsWithProducts.forEach((list) => {
+      list.products.forEach((p) => {
+        if (p.detailed_enrichment_pending) m.set(p.id, p);
+      });
+    });
+    return [...m.values()];
+  }, [listsWithProducts]);
+
+  const pendingDetailedRef = useRef(pendingDetailedProducts);
+  pendingDetailedRef.current = pendingDetailedProducts;
+
+  const onAfterDetailedItem = useCallback(async () => {
+    await reloadListsRef.current();
+  }, []);
+
+  const detailedEnrichment = useDetailedEnrichmentRunner({
+    getPending: () => pendingDetailedRef.current,
+    userId: user?.uid,
+    profile,
+    enabled: Boolean(user) && !loading,
+    onAfterItem: onAfterDetailedItem,
+  });
+
   const handleProductAdded = () => {
     loadData();
     setShowAddProduct(false);
@@ -231,24 +269,45 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
     if (!newListName.trim() || !user) return;
     setCreateListError('');
     try {
-      await createList({
+      const newList = await createList({
         user_id: user.uid,
         name: newListName.trim(),
         share_token: crypto.randomUUID(),
         scope: dashboardTab === 'owned' ? 'stash' : 'wishlist',
       });
+      if (dashboardTab === 'owned' && selectedOwnedIdsForNewStashList.length > 0) {
+        for (const productId of selectedOwnedIdsForNewStashList) {
+          await addProductToList({
+            user_id: user.uid,
+            list_id: newList.id,
+            product_id: productId,
+          });
+        }
+      }
     } catch (error) {
       console.error(error);
       setCreateListError('Could not create list. Please try again.');
       return;
     }
     setNewListName('');
+    setSelectedOwnedIdsForNewStashList([]);
     setCreatingList(false);
     await loadData();
   };
 
+  const goToOwnedSubtab = (sub: OwnedSubtab) => {
+    setOwnedSubtab(sub);
+    if (sub !== 'stash-lists') {
+      setCreatingList(false);
+      setCreateListError('');
+      setNewListName('');
+      setSelectedOwnedIdsForNewStashList([]);
+    }
+  };
+
   const handleNewOutfit = async () => {
     if (!user) return;
+    if (dashboardTab === 'owned') goToOwnedSubtab('outfits');
     try {
       const outfit = await createOutfit({ user_id: user.uid, name: 'New outfit' });
       setOutfitEditor({ outfit, products: [] });
@@ -583,7 +642,7 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
 
         {showAddProduct && (
           <AddProductModal
-            lists={allLists}
+            lists={wishlistListsOnly}
             onClose={() => setShowAddProduct(false)}
             onSuccess={handleProductAdded}
           />
@@ -659,9 +718,13 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
                 </button>
               </div>
             )}
-            {(dashboardTab === 'wishlists' || dashboardTab === 'owned') && (
+            {(dashboardTab === 'wishlists' ||
+              (dashboardTab === 'owned' && ownedSubtab === 'stash-lists')) && (
               <button
-                onClick={() => setCreatingList(true)}
+                onClick={() => {
+                  if (dashboardTab === 'owned') goToOwnedSubtab('stash-lists');
+                  setCreatingList(true);
+                }}
                 className="flex items-center space-x-2 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium"
               >
                 <Plus className="w-4 h-4" />
@@ -691,6 +754,28 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
           <div className="mb-4 px-4 py-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800 flex items-center justify-between">
             <span>{refreshAllStatus}</span>
             <button onClick={() => setRefreshAllStatus(null)} className="text-blue-400 hover:text-blue-600 ml-4 text-xs">Dismiss</button>
+          </div>
+        )}
+
+        {pendingDetailedProducts.length > 0 && (
+          <div className="mb-4 px-4 py-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-950 flex flex-wrap items-center justify-between gap-3">
+            <span>
+              <strong>{pendingDetailedProducts.length}</strong> quick-add link
+              {pendingDetailedProducts.length !== 1 ? 's' : ''} waiting for detailed add. Use{' '}
+              <strong>Profile</strong> to schedule automatic runs, or finish them now.
+            </span>
+            <button
+              type="button"
+              disabled={detailedEnrichment.running}
+              onClick={() => void detailedEnrichment.runBatch()}
+              className="px-3 py-1.5 bg-amber-900 text-white rounded-lg text-sm font-medium hover:bg-amber-800 disabled:opacity-50 shrink-0"
+            >
+              {detailedEnrichment.running
+                ? detailedEnrichment.progress
+                  ? `Working… ${detailedEnrichment.progress.current}/${detailedEnrichment.progress.total}`
+                  : 'Working…'
+                : 'Run detailed add now'}
+            </button>
           </div>
         )}
 
@@ -725,41 +810,137 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
           </button>
         </div>
 
-        {creatingList && (
+        {/* Owned subtabs */}
+        {dashboardTab === 'owned' && (
+          <div className="flex flex-wrap items-center gap-2 mb-6 border-b border-gray-200 pb-3">
+            <button
+              type="button"
+              onClick={() => goToOwnedSubtab('stash')}
+              className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+                ownedSubtab === 'stash'
+                  ? 'bg-gray-900 text-white'
+                  : 'text-gray-600 hover:bg-gray-100'
+              }`}
+            >
+              Stash
+              {totalOwnedItems > 0 && (
+                <span
+                  className={`ml-1.5 text-xs tabular-nums ${ownedSubtab === 'stash' ? 'text-gray-300' : 'text-gray-400'}`}
+                >
+                  ({totalOwnedItems})
+                </span>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => goToOwnedSubtab('stash-lists')}
+              className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+                ownedSubtab === 'stash-lists'
+                  ? 'bg-gray-900 text-white'
+                  : 'text-gray-600 hover:bg-gray-100'
+              }`}
+            >
+              Stash lists
+              {stashListsWithProducts.length > 0 && (
+                <span
+                  className={`ml-1.5 text-xs tabular-nums ${
+                    ownedSubtab === 'stash-lists' ? 'text-gray-300' : 'text-gray-400'
+                  }`}
+                >
+                  ({stashListsWithProducts.length})
+                </span>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => goToOwnedSubtab('outfits')}
+              className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+                ownedSubtab === 'outfits'
+                  ? 'bg-gray-900 text-white'
+                  : 'text-gray-600 hover:bg-gray-100'
+              }`}
+            >
+              Outfits
+              {outfitsWithProducts.length > 0 && (
+                <span
+                  className={`ml-1.5 text-xs tabular-nums ${
+                    ownedSubtab === 'outfits' ? 'text-gray-300' : 'text-gray-400'
+                  }`}
+                >
+                  ({outfitsWithProducts.length})
+                </span>
+              )}
+            </button>
+          </div>
+        )}
+
+        {creatingList &&
+          (dashboardTab === 'wishlists' ||
+            (dashboardTab === 'owned' && ownedSubtab === 'stash-lists')) && (
           <div className="mb-6">
             <form
               onSubmit={handleCreateList}
-              className="bg-white rounded-xl border border-gray-200 p-4 flex items-center space-x-3"
+              className="bg-white rounded-xl border border-gray-200 p-4 flex flex-col gap-4"
             >
-              <input
-                type="text"
-                value={newListName}
-                onChange={(e) => {
-                  setNewListName(e.target.value);
-                  setCreateListError('');
-                }}
-                placeholder={dashboardTab === 'owned' ? 'e.g. Summer clothes' : 'List name'}
-                autoFocus
-                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent text-sm"
-              />
-              <button
-                type="submit"
-                disabled={!newListName.trim()}
-                className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium transition-colors"
-              >
-                Create
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setCreatingList(false);
-                  setNewListName('');
-                  setCreateListError('');
-                }}
-                className="px-3 py-2 text-gray-500 hover:text-gray-700 text-sm transition-colors"
-              >
-                Cancel
-              </button>
+              <div className="flex flex-wrap items-center gap-3">
+                <input
+                  type="text"
+                  value={newListName}
+                  onChange={(e) => {
+                    setNewListName(e.target.value);
+                    setCreateListError('');
+                  }}
+                  placeholder={dashboardTab === 'owned' ? 'e.g. Summer clothes' : 'List name'}
+                  autoFocus
+                  className="flex-1 min-w-[200px] px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent text-sm"
+                />
+                <button
+                  type="submit"
+                  disabled={!newListName.trim()}
+                  className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium transition-colors"
+                >
+                  Create
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCreatingList(false);
+                    setNewListName('');
+                    setCreateListError('');
+                    setSelectedOwnedIdsForNewStashList([]);
+                  }}
+                  className="px-3 py-2 text-gray-500 hover:text-gray-700 text-sm transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+              {dashboardTab === 'owned' && stashProducts.length > 0 && (
+                <div className="border-t border-gray-100 pt-3">
+                  <p className="text-sm font-medium text-gray-800 mb-2">
+                    Include items from your stash (optional)
+                  </p>
+                  <div className="max-h-44 overflow-y-auto space-y-2 rounded-lg border border-gray-100 p-2 bg-gray-50/80">
+                    {stashProducts.map((p) => (
+                      <label
+                        key={p.id}
+                        className="flex items-start gap-2 text-sm cursor-pointer text-gray-700"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedOwnedIdsForNewStashList.includes(p.id)}
+                          onChange={(e) => {
+                            setSelectedOwnedIdsForNewStashList((prev) =>
+                              e.target.checked ? [...prev, p.id] : prev.filter((id) => id !== p.id)
+                            );
+                          }}
+                          className="mt-0.5 rounded border-gray-300"
+                        />
+                        <span className="line-clamp-2">{p.title}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
             </form>
             {createListError && <p className="mt-2 text-sm text-red-600 px-1">{createListError}</p>}
           </div>
@@ -823,127 +1004,160 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
               </div>
             ) : (
               <>
-                <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
-                  <div>
-                    <p className="text-sm text-gray-500 mb-1">
-                      {totalOwnedItems} piece{totalOwnedItems !== 1 ? 's' : ''} in your stash
-                      {totalOwnedValue > 0 && (
-                        <span className="ml-2 font-semibold text-gray-900">~${totalOwnedValue.toFixed(2)} value</span>
-                      )}
-                    </p>
-                    <p className="text-xs text-gray-400 max-w-xl">
-                      Everything you marked <strong>I own this</strong> appears here once. Create stash lists below to
-                      group them (e.g. summer clothes), or build outfits with photos.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => void handleNewOutfit()}
-                    className="flex items-center space-x-2 px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 text-sm font-medium shrink-0"
-                  >
-                    <Sparkles className="w-4 h-4" />
-                    <span>New outfit</span>
-                  </button>
-                </div>
+                {ownedSubtab === 'stash' && (
+                  <>
+                    <div className="mb-6">
+                      <p className="text-sm text-gray-500 mb-1">
+                        {totalOwnedItems} piece{totalOwnedItems !== 1 ? 's' : ''} in your stash
+                        {totalOwnedValue > 0 && (
+                          <span className="ml-2 font-semibold text-gray-900">
+                            ~${totalOwnedValue.toFixed(2)} value
+                          </span>
+                        )}
+                      </p>
+                      <p className="text-xs text-gray-400 max-w-xl">
+                        Everything you marked <strong>I own this</strong> shows here. Organize into{' '}
+                        <button
+                          type="button"
+                          onClick={() => goToOwnedSubtab('stash-lists')}
+                          className="text-gray-600 underline hover:text-gray-900"
+                        >
+                          stash lists
+                        </button>{' '}
+                        or build{' '}
+                        <button
+                          type="button"
+                          onClick={() => goToOwnedSubtab('outfits')}
+                          className="text-gray-600 underline hover:text-gray-900"
+                        >
+                          outfits
+                        </button>
+                        .
+                      </p>
+                    </div>
 
-                <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Your stash</h2>
-                {stashProducts.length === 0 ? (
-                  <div className="text-center py-12 mb-10 border border-dashed border-gray-200 rounded-2xl">
-                    <ShoppingBag className="w-14 h-14 text-gray-300 mx-auto mb-3" />
-                    <p className="text-gray-600 text-sm max-w-md mx-auto mb-2">
-                      Nothing owned yet. On <strong>Wishlists</strong>, save products and tap <strong>I own this</strong>{' '}
-                      when you have them — they show up here as individual pieces.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 mb-10">
-                    {stashProducts.map((product) => (
-                      <ProductCard
-                        key={product.id}
-                        product={product}
-                        onClick={() => setSelectedProduct(product)}
-                        onDelete={() => handleDeleteProduct(product.id)}
-                        onPriceUpdate={updateProductInState}
-                        onMarkOwned={updateProductInState}
-                        hideOwned
-                      />
-                    ))}
-                  </div>
+                    <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Your stash</h2>
+                    {stashProducts.length === 0 ? (
+                      <div className="text-center py-16 border border-dashed border-gray-200 rounded-2xl">
+                        <ShoppingBag className="w-14 h-14 text-gray-300 mx-auto mb-3" />
+                        <p className="text-gray-600 text-sm max-w-md mx-auto mb-2">
+                          Nothing owned yet. On <strong>Wishlists</strong>, save products and tap{' '}
+                          <strong>I own this</strong> when you have them — they show up here.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                        {stashProducts.map((product) => (
+                          <ProductCard
+                            key={product.id}
+                            product={product}
+                            onClick={() => setSelectedProduct(product)}
+                            onDelete={() => handleDeleteProduct(product.id)}
+                            onPriceUpdate={updateProductInState}
+                            onMarkOwned={updateProductInState}
+                            hideOwned
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </>
                 )}
 
-                <div className="mb-8">
-                  <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2">
-                    <Sparkles className="w-3.5 h-3.5" />
-                    Outfits
-                  </h2>
-                  {outfitsWithProducts.length === 0 ? (
-                    <p className="text-sm text-gray-500 mb-4">
-                      No outfits yet. Create one, pick pieces from your stash, and upload mirror pics or inspo shots.
-                    </p>
-                  ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 mb-2">
-                      {outfitsWithProducts.map(({ outfit, products }) => {
-                        const cover =
-                          outfit.image_urls[0] ?? products.find((p) => p.image_url)?.image_url ?? null;
-                        return (
-                          <button
-                            key={outfit.id}
-                            type="button"
-                            onClick={() => setOutfitEditor({ outfit, products })}
-                            className="text-left bg-white rounded-2xl border border-gray-200 overflow-hidden hover:shadow-lg transition-shadow"
-                          >
-                            <div className="aspect-[4/3] bg-gray-100 relative">
-                              {cover ? (
-                                <img src={cover} alt="" className="w-full h-full object-cover" />
-                              ) : (
-                                <div className="w-full h-full flex items-center justify-center">
-                                  <Camera className="w-12 h-12 text-gray-300" />
-                                </div>
-                              )}
-                            </div>
-                            <div className="p-4">
-                              <h3 className="font-semibold text-gray-900 line-clamp-1">{outfit.name}</h3>
-                              <p className="text-xs text-gray-500 mt-1">
-                                {products.length} piece{products.length !== 1 ? 's' : ''}
-                                {outfit.image_urls.length > 0
-                                  ? ` · ${outfit.image_urls.length} photo${outfit.image_urls.length !== 1 ? 's' : ''}`
-                                  : ''}
-                              </p>
-                            </div>
-                          </button>
-                        );
-                      })}
+                {ownedSubtab === 'stash-lists' && (
+                  <>
+                    <div className="mb-6">
+                      <h2 className="text-lg font-semibold text-gray-900 mb-1">Stash lists</h2>
+                      <p className="text-sm text-gray-500 max-w-2xl">
+                        Group pieces you own (e.g. summer rotation). When you create a list you can include items from
+                        your stash, or open any owned product and use <strong>Add to Lists</strong>.
+                      </p>
                     </div>
-                  )}
-                </div>
+                    {stashListsWithProducts.length === 0 && !creatingList ? (
+                      <div className="text-center py-16 border border-dashed border-gray-200 rounded-2xl">
+                        <ShoppingBag className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+                        <h3 className="text-base font-semibold text-gray-900 mb-2">No stash lists yet</h3>
+                        <p className="text-gray-600 text-sm max-w-md mx-auto mb-6">
+                          Use <strong>New stash list</strong> above to create one, then add items from your stash.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                        {stashListsWithProducts.map((list) => (
+                          <ListCard
+                            key={list.id}
+                            list={list}
+                            onClick={() => setView({ type: 'list-detail', listId: list.id })}
+                            onDelete={() => handleDeleteList(list.id)}
+                            onShare={() => handleShareList(list)}
+                            onRename={(newName) => handleRenameList(list.id, newName)}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
 
-                <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Stash lists</h2>
-                <p className="text-sm text-gray-500 mb-4 max-w-2xl">
-                  Stash lists are only on this tab — not the same as wishlists. Open any item above, use{' '}
-                  <strong>Add to Lists</strong>, and pick a stash list to organize your owned pieces.
-                </p>
-                {stashListsWithProducts.length === 0 && !creatingList ? (
-                  <div className="text-center py-14 border border-dashed border-gray-200 rounded-2xl">
-                    <ShoppingBag className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-                    <h3 className="text-base font-semibold text-gray-900 mb-2">No stash lists yet</h3>
-                    <p className="text-gray-600 text-sm max-w-md mx-auto">
-                      Use <strong>New stash list</strong> to create one (e.g. “Summer rotation”), then add items from
-                      your stash via each product’s details.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                    {stashListsWithProducts.map((list) => (
-                      <ListCard
-                        key={list.id}
-                        list={list}
-                        onClick={() => setView({ type: 'list-detail', listId: list.id })}
-                        onDelete={() => handleDeleteList(list.id)}
-                        onShare={() => handleShareList(list)}
-                        onRename={(newName) => handleRenameList(list.id, newName)}
-                      />
-                    ))}
-                  </div>
+                {ownedSubtab === 'outfits' && (
+                  <>
+                    <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
+                      <div>
+                        <h2 className="text-lg font-semibold text-gray-900 mb-1">Outfits</h2>
+                        <p className="text-sm text-gray-500 max-w-xl">
+                          Curated looks from your stash — add pieces and upload mirror pics or inspo shots.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void handleNewOutfit()}
+                        className="flex items-center space-x-2 px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 text-sm font-medium shrink-0"
+                      >
+                        <Shirt className="w-4 h-4" strokeWidth={2} />
+                        <span>New outfit</span>
+                      </button>
+                    </div>
+                    {outfitsWithProducts.length === 0 ? (
+                      <div className="text-center py-16 border border-dashed border-gray-200 rounded-2xl">
+                        <Camera className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+                        <p className="text-gray-600 text-sm max-w-md mx-auto">
+                          No outfits yet. Tap <strong>New outfit</strong> to pick pieces from your stash and add photos.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                        {outfitsWithProducts.map(({ outfit, products }) => {
+                          const cover =
+                            outfit.image_urls[0] ?? products.find((p) => p.image_url)?.image_url ?? null;
+                          return (
+                            <button
+                              key={outfit.id}
+                              type="button"
+                              onClick={() => setOutfitEditor({ outfit, products })}
+                              className="text-left bg-white rounded-2xl border border-gray-200 overflow-hidden hover:shadow-lg transition-shadow"
+                            >
+                              <div className="aspect-[4/3] bg-gray-100 relative">
+                                {cover ? (
+                                  <img src={cover} alt="" className="w-full h-full object-cover" />
+                                ) : (
+                                  <div className="w-full h-full flex items-center justify-center">
+                                    <Camera className="w-12 h-12 text-gray-300" />
+                                  </div>
+                                )}
+                              </div>
+                              <div className="p-4">
+                                <h3 className="font-semibold text-gray-900 line-clamp-1">{outfit.name}</h3>
+                                <p className="text-xs text-gray-500 mt-1">
+                                  {products.length} piece{products.length !== 1 ? 's' : ''}
+                                  {outfit.image_urls.length > 0
+                                    ? ` · ${outfit.image_urls.length} photo${outfit.image_urls.length !== 1 ? 's' : ''}`
+                                    : ''}
+                                </p>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </>
                 )}
               </>
             )}
@@ -955,7 +1169,7 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
 
       {showAddProduct && (
         <AddProductModal
-          lists={allLists}
+          lists={wishlistListsOnly}
           onClose={() => setShowAddProduct(false)}
           onSuccess={handleProductAdded}
           prefillUrl={prefillUrl}

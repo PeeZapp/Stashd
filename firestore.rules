@@ -18,6 +18,13 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/products/$(productId)).data.user_id == request.auth.uid;
     }
 
+    /** Stash lists may only contain owned products */
+    function stashListAllowsProduct(listId, productId) {
+      let list = get(/databases/$(database)/documents/lists/$(listId)).data;
+      let product = get(/databases/$(database)/documents/products/$(productId)).data;
+      return list.scope != 'stash' || product.is_owned == true;
+    }
+
     function isOutfitOwnerForCreate(outfitId) {
       return isSignedIn()
         && exists(/databases/$(database)/documents/outfits/$(outfitId))
@@ -53,7 +60,8 @@ service cloud.firestore {
       allow create: if isSignedIn()
         && request.resource.data.user_id == request.auth.uid
         && isListOwnerForCreate(request.resource.data.list_id)
-        && isProductOwnerForCreate(request.resource.data.product_id);
+        && isProductOwnerForCreate(request.resource.data.product_id)
+        && stashListAllowsProduct(request.resource.data.list_id, request.resource.data.product_id);
 
       allow update, delete: if isSignedIn()
         && resource.data.user_id == request.auth.uid;

@@ -78,7 +78,8 @@ export default function ProductDetailModal({
           product_id: product.id,
         });
       } catch (error) {
-        console.error(error);
+        const msg = error instanceof Error ? error.message : 'Could not update lists';
+        alert(msg);
         return;
       }
       setProductLists((prev) => [...prev, listId]);
@@ -120,6 +121,9 @@ export default function ProductDetailModal({
 
   const storeName = product.store_name ?? 'Store';
   const isEbayPrice = product.price_source === 'ebay';
+
+  const wishlistLists = lists.filter((l) => l.scope !== 'stash');
+  const stashLists = lists.filter((l) => l.scope === 'stash');
 
   return (
     <div
@@ -247,24 +251,75 @@ export default function ProductDetailModal({
               <h3 className="text-sm font-semibold text-gray-900 mb-3">Add to Lists</h3>
               {loading ? (
                 <p className="text-sm text-gray-500">Loading...</p>
-              ) : lists.length === 0 ? (
+              ) : wishlistLists.length === 0 && stashLists.length === 0 ? (
                 <p className="text-sm text-gray-500">No lists yet. Create one first.</p>
               ) : (
-                <div className="space-y-2 max-h-36 overflow-y-auto">
-                  {lists.map((list) => (
-                    <button
-                      key={list.id}
-                      onClick={() => handleToggleList(list.id)}
-                      className={`w-full flex items-center justify-between p-3 rounded-lg border transition-colors ${
-                        productLists.includes(list.id)
-                          ? 'bg-gray-900 text-white border-gray-900'
-                          : 'bg-white text-gray-700 border-gray-300 hover:border-gray-400'
-                      }`}
-                    >
-                      <span className="text-sm font-medium">{list.name}</span>
-                      {productLists.includes(list.id) && <Check className="w-4 h-4" />}
-                    </button>
-                  ))}
+                <div className="space-y-3 max-h-56 overflow-y-auto pr-1">
+                  {wishlistLists.length > 0 && (
+                    <div>
+                      <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
+                        Wishlists
+                      </p>
+                      <div className="space-y-2">
+                        {wishlistLists.map((list) => (
+                          <button
+                            key={list.id}
+                            type="button"
+                            onClick={() => void handleToggleList(list.id)}
+                            className={`w-full flex items-center justify-between p-3 rounded-lg border transition-colors ${
+                              productLists.includes(list.id)
+                                ? 'bg-gray-900 text-white border-gray-900'
+                                : 'bg-white text-gray-700 border-gray-300 hover:border-gray-400'
+                            }`}
+                          >
+                            <span className="text-sm font-medium">{list.name}</span>
+                            {productLists.includes(list.id) && <Check className="w-4 h-4" />}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {stashLists.length > 0 && (
+                    <div>
+                      <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
+                        Stash lists
+                      </p>
+                      {!product.is_owned && (
+                        <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-2">
+                          Only items you own can go on stash lists. Mark <strong>I own this</strong> on the
+                          card first.
+                        </p>
+                      )}
+                      <div className="space-y-2">
+                        {stashLists.map((list) => {
+                          const blocked = !product.is_owned;
+                          return (
+                            <button
+                              key={list.id}
+                              type="button"
+                              disabled={blocked}
+                              onClick={() => {
+                                if (blocked) return;
+                                void handleToggleList(list.id);
+                              }}
+                              className={`w-full flex items-center justify-between p-3 rounded-lg border transition-colors ${
+                                blocked
+                                  ? 'bg-gray-50 text-gray-400 border-gray-200 cursor-not-allowed'
+                                  : productLists.includes(list.id)
+                                    ? 'bg-gray-900 text-white border-gray-900'
+                                    : 'bg-white text-gray-700 border-gray-300 hover:border-gray-400'
+                              }`}
+                            >
+                              <span className="text-sm font-medium">{list.name}</span>
+                              {productLists.includes(list.id) && !blocked && (
+                                <Check className="w-4 h-4" />
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
