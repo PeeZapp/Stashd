@@ -131,12 +131,15 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
     void loadData();
   }, [user.uid]);
 
+  // When outfits refresh, merge server data into the open editor. Do not clear the editor if
+  // the outfit is missing from the array (e.g. outfits query failed) — that would close the modal
+  // immediately after "New outfit".
   useEffect(() => {
     setOutfitEditor((prev) => {
       if (!prev) return prev;
       const match = outfitsWithProducts.find(({ outfit }) => outfit.id === prev.outfit.id);
       if (match) return match;
-      return null;
+      return prev;
     });
   }, [outfitsWithProducts]);
 
@@ -248,10 +251,13 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
     if (!user) return;
     try {
       const outfit = await createOutfit({ user_id: user.uid, name: 'New outfit' });
-      await loadLists();
       setOutfitEditor({ outfit, products: [] });
+      await loadLists();
     } catch (error) {
       console.error(error);
+      alert(
+        'Could not create outfit. If this persists, deploy Firestore rules for the `outfits` collection and try again.'
+      );
     }
   };
 
