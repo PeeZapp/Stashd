@@ -4,9 +4,11 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "node server/dev.js",
+    "dev:vite": "vite",
     "build": "vite build",
-    "start": "NODE_ENV=production node server/proxy.js",
+    "proxy": "node server/proxy.js",
+    "start": "node server/proxy.js",
     "lint": "eslint .",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.app.json"

@@ -26,6 +26,16 @@ import type {
   PriceSource,
   Product,
   Profile,
+  StandardList,
+  StandardListComment,
+  StandardListItem,
+  SavedLink,
+  SavedLinkCollection,
+  SavedLinkMetadata,
+  SavedLinkPriority,
+  SavedLinkStatus,
+  SavedLinkTimestampNote,
+  SavedLinkType,
 } from './types';
 
 function nowIso(): string {
@@ -99,6 +109,214 @@ function mapListProduct(id: string, data: DocumentData): ListProduct {
     list_id: data.list_id as string,
     product_id: data.product_id as string,
     added_at: asIso(data.added_at),
+  };
+}
+
+function mapStandardListPriority(value: unknown): StandardListItem['priority'] {
+  const n = typeof value === 'number' ? value : 0;
+  if (n >= 1 && n <= 4) return n as StandardListItem['priority'];
+  return 0;
+}
+
+function mapStandardList(id: string, data: DocumentData): StandardList {
+  const collaboratorEmails = data.collaborator_emails;
+  return {
+    id,
+    user_id: data.user_id as string,
+    name: (data.name as string) ?? '',
+    description: (data.description as string | null) ?? null,
+    is_pinned: Boolean(data.is_pinned),
+    is_shared: Boolean(data.is_shared),
+    share_token: (data.share_token as string | null) ?? null,
+    collaborator_emails: Array.isArray(collaboratorEmails)
+      ? (collaboratorEmails as string[])
+          .filter((email) => typeof email === 'string')
+          .map((email) => email.trim().toLowerCase())
+          .filter(Boolean)
+      : [],
+    created_at: asIso(data.created_at),
+    updated_at: asIso(data.updated_at),
+  };
+}
+
+function mapStandardListItem(id: string, data: DocumentData): StandardListItem {
+  const tagsRaw = data.tags;
+  const tags = Array.isArray(tagsRaw)
+    ? (tagsRaw as string[]).filter((t) => typeof t === 'string').map((t) => t.toLowerCase())
+    : [];
+  const imageUrlsRaw = data.image_urls;
+  const image_urls = Array.isArray(imageUrlsRaw)
+    ? (imageUrlsRaw as string[]).filter((url) => typeof url === 'string')
+    : [];
+  return {
+    id,
+    user_id: data.user_id as string,
+    list_id: data.list_id as string,
+    parent_id: (data.parent_id as string | null) ?? null,
+    text: (data.text as string) ?? '',
+    notes: (data.notes as string | null) ?? null,
+    tags,
+    priority: mapStandardListPriority(data.priority),
+    due_at: data.due_at ? asIso(data.due_at) : null,
+    recurrence: data.recurrence === 'daily' || data.recurrence === 'weekly' || data.recurrence === 'monthly'
+      ? data.recurrence
+      : 'none',
+    link_url: (data.link_url as string | null) ?? null,
+    link_title: (data.link_title as string | null) ?? null,
+    product_id: (data.product_id as string | null) ?? null,
+    image_urls,
+    is_completed: Boolean(data.is_completed),
+    position: typeof data.position === 'number' ? data.position : 0,
+    created_at: asIso(data.created_at),
+    updated_at: asIso(data.updated_at),
+  };
+}
+
+function mapStandardListComment(id: string, data: DocumentData): StandardListComment {
+  return {
+    id,
+    list_id: data.list_id as string,
+    item_id: data.item_id as string,
+    user_id: data.user_id as string,
+    author_name: (data.author_name as string) ?? 'Someone',
+    body: (data.body as string) ?? '',
+    created_at: asIso(data.created_at),
+  };
+}
+
+const SAVED_LINK_TYPES: SavedLinkType[] = [
+  'recipe',
+  'video',
+  'article',
+  'tool',
+  'place',
+  'product',
+  'other',
+];
+
+const SAVED_LINK_STATUSES: SavedLinkStatus[] = [
+  'saved',
+  'try_next',
+  'tried',
+  'liked',
+  'not_for_me',
+  'archived',
+];
+
+function mapSavedLinkPriority(value: unknown): SavedLinkPriority {
+  const n = typeof value === 'number' ? value : 0;
+  if (n >= 1 && n <= 4) return n as SavedLinkPriority;
+  return 0;
+}
+
+function mapSavedLinkType(value: unknown): SavedLinkType {
+  return SAVED_LINK_TYPES.includes(value as SavedLinkType) ? (value as SavedLinkType) : 'other';
+}
+
+function mapSavedLinkStatus(value: unknown): SavedLinkStatus {
+  return SAVED_LINK_STATUSES.includes(value as SavedLinkStatus)
+    ? (value as SavedLinkStatus)
+    : 'saved';
+}
+
+function mapSavedLinkMetadata(data: unknown): SavedLinkMetadata {
+  if (!data || typeof data !== 'object') return {};
+  const raw = data as Record<string, unknown>;
+  const ingredients = raw.ingredients;
+  const diet_tags = raw.diet_tags;
+  const metadata: SavedLinkMetadata = {};
+  if (Array.isArray(ingredients)) {
+    metadata.ingredients = (ingredients as string[]).filter((x) => typeof x === 'string');
+  }
+  if (typeof raw.cook_time_minutes === 'number') metadata.cook_time_minutes = raw.cook_time_minutes;
+  if (typeof raw.total_time_minutes === 'number') metadata.total_time_minutes = raw.total_time_minutes;
+  if (typeof raw.servings === 'string') metadata.servings = raw.servings;
+  if (typeof raw.cuisine === 'string') metadata.cuisine = raw.cuisine;
+  if (Array.isArray(diet_tags)) {
+    metadata.diet_tags = (diet_tags as string[]).filter((x) => typeof x === 'string');
+  }
+  if (typeof raw.creator === 'string') metadata.creator = raw.creator;
+  if (typeof raw.duration === 'string') metadata.duration = raw.duration;
+  if (typeof raw.platform === 'string') metadata.platform = raw.platform;
+  if (typeof raw.embed_url === 'string') metadata.embed_url = raw.embed_url;
+  if (typeof raw.author === 'string') metadata.author = raw.author;
+  if (typeof raw.published_at === 'string') metadata.published_at = raw.published_at;
+  return metadata;
+}
+
+/** Firestore rejects `undefined`; strip it from nested objects before writes. */
+function sanitizeForFirestore<T>(value: T): T {
+  if (value === undefined) return value;
+  if (value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) {
+    return value.map((item) =>
+      item !== null && typeof item === 'object' ? sanitizeForFirestore(item) : item
+    ) as T;
+  }
+  const out: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (entry !== undefined) out[key] = sanitizeForFirestore(entry);
+  }
+  return out as T;
+}
+
+function mapSavedLinkCollection(id: string, data: DocumentData): SavedLinkCollection {
+  return {
+    id,
+    user_id: data.user_id as string,
+    name: (data.name as string) ?? '',
+    description: (data.description as string | null) ?? null,
+    color: (data.color as string | null) ?? null,
+    icon: (data.icon as string | null) ?? null,
+    position: typeof data.position === 'number' ? data.position : 0,
+    created_at: asIso(data.created_at),
+    updated_at: asIso(data.updated_at),
+  };
+}
+
+function mapSavedLinkTimestampNotes(value: unknown): SavedLinkTimestampNote[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
+    .map((item) => ({
+      id: typeof item.id === 'string' ? item.id : crypto.randomUUID(),
+      label: typeof item.label === 'string' ? item.label : '',
+      timecode: typeof item.timecode === 'string' ? item.timecode : '',
+      seconds: typeof item.seconds === 'number' ? item.seconds : null,
+      note: typeof item.note === 'string' ? item.note : '',
+      created_at: typeof item.created_at === 'string' ? item.created_at : nowIso(),
+    }))
+    .filter((item) => item.timecode || item.note);
+}
+
+function mapSavedLink(id: string, data: DocumentData): SavedLink {
+  const collectionIds = data.collection_ids;
+  const tagsRaw = data.tags;
+  return {
+    id,
+    user_id: data.user_id as string,
+    collection_ids: Array.isArray(collectionIds)
+      ? (collectionIds as string[]).filter((id) => typeof id === 'string')
+      : [],
+    url: (data.url as string) ?? '',
+    canonical_url: (data.canonical_url as string) ?? (data.url as string) ?? '',
+    title: (data.title as string) ?? '',
+    description: (data.description as string | null) ?? null,
+    image_url: (data.image_url as string | null) ?? null,
+    site_name: (data.site_name as string | null) ?? null,
+    favicon_url: (data.favicon_url as string | null) ?? null,
+    link_type: mapSavedLinkType(data.link_type),
+    status: mapSavedLinkStatus(data.status),
+    priority: mapSavedLinkPriority(data.priority),
+    tags: Array.isArray(tagsRaw)
+      ? (tagsRaw as string[]).filter((t) => typeof t === 'string').map((t) => t.toLowerCase())
+      : [],
+    notes: (data.notes as string | null) ?? null,
+    timestamp_notes: mapSavedLinkTimestampNotes(data.timestamp_notes),
+    metadata: mapSavedLinkMetadata(data.metadata),
+    enrichment_pending: Boolean(data.enrichment_pending),
+    created_at: asIso(data.created_at),
+    updated_at: asIso(data.updated_at),
   };
 }
 
@@ -429,6 +647,274 @@ export async function getListWithProductsByShareToken(
   return { list, products };
 }
 
+export async function getUserStandardLists(userId: string, userEmail?: string | null): Promise<StandardList[]> {
+  const ownedSnap = await getDocs(query(collection(db, 'standard_lists'), where('user_id', '==', userId)));
+  const lists = ownedSnap.docs.map((d) => mapStandardList(d.id, d.data()));
+
+  const email = userEmail?.trim().toLowerCase();
+  if (email) {
+    const sharedSnap = await getDocs(
+      query(collection(db, 'standard_lists'), where('collaborator_emails', 'array-contains', email))
+    );
+    sharedSnap.docs.forEach((d) => {
+      if (!lists.some((list) => list.id === d.id)) lists.push(mapStandardList(d.id, d.data()));
+    });
+  }
+
+  return lists
+    .sort((a, b) => {
+      if (a.is_pinned !== b.is_pinned) return a.is_pinned ? -1 : 1;
+      return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+    });
+}
+
+export async function createStandardList(params: {
+  user_id: string;
+  name: string;
+  description?: string | null;
+  is_pinned?: boolean;
+  is_shared?: boolean;
+  share_token?: string | null;
+  collaborator_emails?: string[];
+}): Promise<StandardList> {
+  const ref = await addDoc(collection(db, 'standard_lists'), {
+    user_id: params.user_id,
+    name: params.name,
+    description: params.description ?? null,
+    is_pinned: Boolean(params.is_pinned),
+    is_shared: Boolean(params.is_shared),
+    share_token: params.share_token ?? null,
+    collaborator_emails: params.collaborator_emails ?? [],
+    created_at: serverTimestamp(),
+    updated_at: serverTimestamp(),
+  });
+  const snap = await getDoc(ref);
+  return mapStandardList(snap.id, snap.data() ?? params);
+}
+
+export async function createStandardListWithItems(params: {
+  user_id: string;
+  name: string;
+  description?: string | null;
+  itemTexts: string[];
+}): Promise<{ list: StandardList; items: StandardListItem[] }> {
+  const list = await createStandardList({
+    user_id: params.user_id,
+    name: params.name,
+    description: params.description ?? null,
+  });
+  const items: StandardListItem[] = [];
+  for (let i = 0; i < params.itemTexts.length; i++) {
+    const text = params.itemTexts[i]?.trim();
+    if (!text) continue;
+    const item = await createStandardListItem({
+      user_id: params.user_id,
+      list_id: list.id,
+      text,
+      position: i,
+    });
+    items.push(item);
+  }
+  return { list, items };
+}
+
+export async function updateStandardList(
+  listId: string,
+  updates: Partial<
+    Pick<
+      StandardList,
+      'name' | 'description' | 'is_pinned' | 'is_shared' | 'share_token' | 'collaborator_emails'
+    >
+  >
+): Promise<void> {
+  await setDoc(
+    doc(db, 'standard_lists', listId),
+    {
+      ...updates,
+      updated_at: serverTimestamp(),
+    },
+    { merge: true }
+  );
+}
+
+export async function deleteStandardList(listId: string, userId: string): Promise<void> {
+  const [itemsSnap, commentsSnap] = await Promise.all([
+    getDocs(
+      query(
+        collection(db, 'standard_list_items'),
+        where('list_id', '==', listId),
+        where('user_id', '==', userId)
+      )
+    ),
+    getDocs(query(collection(db, 'standard_list_comments'), where('list_id', '==', listId))),
+  ]);
+  const batch = writeBatch(db);
+  itemsSnap.docs.forEach((d) => batch.delete(d.ref));
+  commentsSnap.docs.forEach((d) => batch.delete(d.ref));
+  batch.delete(doc(db, 'standard_lists', listId));
+  await batch.commit();
+}
+
+export async function getStandardListItems(
+  listId: string,
+  userId: string
+): Promise<StandardListItem[]> {
+  const snap = await getDocs(
+    query(
+      collection(db, 'standard_list_items'),
+      where('list_id', '==', listId),
+      where('user_id', '==', userId)
+    )
+  );
+  return snap.docs
+    .map((d) => mapStandardListItem(d.id, d.data()))
+    .sort((a, b) => a.position - b.position || new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+}
+
+export async function getAllStandardListItemsForUser(userId: string): Promise<StandardListItem[]> {
+  const snap = await getDocs(
+    query(collection(db, 'standard_list_items'), where('user_id', '==', userId))
+  );
+  return snap.docs.map((d) => mapStandardListItem(d.id, d.data()));
+}
+
+export async function createStandardListItem(params: {
+  user_id: string;
+  list_id: string;
+  text: string;
+  position: number;
+  parent_id?: string | null;
+  notes?: string | null;
+  tags?: string[];
+  priority?: StandardListItem['priority'];
+  due_at?: string | null;
+  recurrence?: StandardListItem['recurrence'];
+  link_url?: string | null;
+  link_title?: string | null;
+  product_id?: string | null;
+  image_urls?: string[];
+}): Promise<StandardListItem> {
+  const ref = await addDoc(collection(db, 'standard_list_items'), {
+    user_id: params.user_id,
+    list_id: params.list_id,
+    parent_id: params.parent_id ?? null,
+    text: params.text,
+    notes: params.notes ?? null,
+    tags: params.tags ?? [],
+    priority: params.priority ?? 0,
+    due_at: params.due_at ?? null,
+    recurrence: params.recurrence ?? 'none',
+    link_url: params.link_url ?? null,
+    link_title: params.link_title ?? null,
+    product_id: params.product_id ?? null,
+    image_urls: params.image_urls ?? [],
+    position: params.position,
+    is_completed: false,
+    created_at: serverTimestamp(),
+    updated_at: serverTimestamp(),
+  });
+  await setDoc(
+    doc(db, 'standard_lists', params.list_id),
+    { updated_at: serverTimestamp() },
+    { merge: true }
+  );
+  const snap = await getDoc(ref);
+  return mapStandardListItem(snap.id, snap.data() ?? params);
+}
+
+export async function updateStandardListItem(
+  itemId: string,
+  updates: Partial<
+    Pick<
+      StandardListItem,
+      | 'text'
+      | 'is_completed'
+      | 'position'
+      | 'parent_id'
+      | 'notes'
+      | 'tags'
+      | 'priority'
+      | 'due_at'
+      | 'recurrence'
+      | 'link_url'
+      | 'link_title'
+      | 'product_id'
+      | 'image_urls'
+    >
+  >
+): Promise<void> {
+  const payload: Record<string, unknown> = { ...updates, updated_at: serverTimestamp() };
+  await setDoc(doc(db, 'standard_list_items', itemId), payload, { merge: true });
+}
+
+export async function reorderStandardListItems(
+  updates: Array<{ id: string; position: number }>
+): Promise<void> {
+  if (updates.length === 0) return;
+  const batch = writeBatch(db);
+  updates.forEach(({ id, position }) => {
+    batch.set(
+      doc(db, 'standard_list_items', id),
+      { position, updated_at: serverTimestamp() },
+      { merge: true }
+    );
+  });
+  await batch.commit();
+}
+
+export async function deleteStandardListItem(itemId: string, listId: string): Promise<void> {
+  const [all, commentsSnap] = await Promise.all([
+    getDocs(query(collection(db, 'standard_list_items'), where('list_id', '==', listId))),
+    getDocs(query(collection(db, 'standard_list_comments'), where('list_id', '==', listId))),
+  ]);
+  const batch = writeBatch(db);
+  const toDelete = new Set<string>([itemId]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    all.docs.forEach((d) => {
+      const data = d.data();
+      if (data.parent_id && toDelete.has(data.parent_id as string) && !toDelete.has(d.id)) {
+        toDelete.add(d.id);
+        changed = true;
+      }
+    });
+  }
+  toDelete.forEach((id) => batch.delete(doc(db, 'standard_list_items', id)));
+  commentsSnap.docs
+    .filter((d) => toDelete.has(d.data().item_id as string))
+    .forEach((d) => batch.delete(d.ref));
+  await batch.commit();
+}
+
+export async function getStandardListComments(listId: string): Promise<StandardListComment[]> {
+  const snap = await getDocs(
+    query(collection(db, 'standard_list_comments'), where('list_id', '==', listId))
+  );
+  return snap.docs
+    .map((d) => mapStandardListComment(d.id, d.data()))
+    .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+}
+
+export async function createStandardListComment(params: {
+  list_id: string;
+  item_id: string;
+  user_id: string;
+  author_name: string;
+  body: string;
+}): Promise<StandardListComment> {
+  const ref = await addDoc(collection(db, 'standard_list_comments'), {
+    ...params,
+    created_at: serverTimestamp(),
+  });
+  const snap = await getDoc(ref);
+  return mapStandardListComment(snap.id, snap.data() ?? params);
+}
+
+export async function deleteStandardListComment(commentId: string): Promise<void> {
+  await deleteDoc(doc(db, 'standard_list_comments', commentId));
+}
+
 export async function getProductById(productId: string): Promise<Product | null> {
   const snap = await getDoc(doc(db, 'products', productId));
   if (!snap.exists()) return null;
@@ -611,8 +1097,191 @@ export async function getUserOutfitsWithProducts(userId: string): Promise<
   }));
 }
 
+// ── Saved links (URL library) ───────────────────────────────
+
+export async function getUserSavedLinkCollections(userId: string): Promise<SavedLinkCollection[]> {
+  const snap = await getDocs(
+    query(collection(db, 'saved_link_collections'), where('user_id', '==', userId))
+  );
+  return snap.docs
+    .map((d) => mapSavedLinkCollection(d.id, d.data()))
+    .sort((a, b) => a.position - b.position || a.name.localeCompare(b.name));
+}
+
+export async function createSavedLinkCollection(params: {
+  user_id: string;
+  name: string;
+  description?: string | null;
+  color?: string | null;
+  icon?: string | null;
+  position?: number;
+}): Promise<SavedLinkCollection> {
+  const ref = await addDoc(collection(db, 'saved_link_collections'), {
+    user_id: params.user_id,
+    name: params.name.trim(),
+    description: params.description ?? null,
+    color: params.color ?? null,
+    icon: params.icon ?? null,
+    position: params.position ?? 0,
+    created_at: serverTimestamp(),
+    updated_at: serverTimestamp(),
+  });
+  const snap = await getDoc(ref);
+  return mapSavedLinkCollection(snap.id, snap.data() ?? params);
+}
+
+export async function updateSavedLinkCollection(
+  collectionId: string,
+  updates: Partial<Pick<SavedLinkCollection, 'name' | 'description' | 'color' | 'icon' | 'position'>>
+): Promise<void> {
+  await setDoc(
+    doc(db, 'saved_link_collections', collectionId),
+    { ...updates, updated_at: serverTimestamp() },
+    { merge: true }
+  );
+}
+
+export async function deleteSavedLinkCollection(collectionId: string): Promise<void> {
+  await deleteDoc(doc(db, 'saved_link_collections', collectionId));
+}
+
+export async function getUserSavedLinks(userId: string): Promise<SavedLink[]> {
+  const snap = await getDocs(query(collection(db, 'saved_links'), where('user_id', '==', userId)));
+  return snap.docs
+    .map((d) => mapSavedLink(d.id, d.data()))
+    .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+}
+
+export async function findSavedLinkByCanonicalUrl(
+  userId: string,
+  canonicalUrl: string
+): Promise<SavedLink | null> {
+  const snap = await getDocs(
+    query(
+      collection(db, 'saved_links'),
+      where('user_id', '==', userId),
+      where('canonical_url', '==', canonicalUrl)
+    )
+  );
+  if (snap.empty) return null;
+  const d = snap.docs[0];
+  return mapSavedLink(d.id, d.data());
+}
+
+export async function createSavedLink(params: {
+  user_id: string;
+  collection_ids?: string[];
+  url: string;
+  canonical_url: string;
+  title: string;
+  description?: string | null;
+  image_url?: string | null;
+  site_name?: string | null;
+  favicon_url?: string | null;
+  link_type?: SavedLinkType;
+  status?: SavedLinkStatus;
+  priority?: SavedLinkPriority;
+  tags?: string[];
+  notes?: string | null;
+  timestamp_notes?: SavedLinkTimestampNote[];
+  metadata?: SavedLinkMetadata;
+  enrichment_pending?: boolean;
+}): Promise<SavedLink> {
+  const ref = await addDoc(collection(db, 'saved_links'), {
+    user_id: params.user_id,
+    collection_ids: params.collection_ids ?? [],
+    url: params.url,
+    canonical_url: params.canonical_url,
+    title: params.title,
+    description: params.description ?? null,
+    image_url: params.image_url ?? null,
+    site_name: params.site_name ?? null,
+    favicon_url: params.favicon_url ?? null,
+    link_type: params.link_type ?? 'other',
+    status: params.status ?? 'saved',
+    priority: params.priority ?? 0,
+    tags: params.tags ?? [],
+    notes: params.notes ?? null,
+    timestamp_notes: params.timestamp_notes ?? [],
+    metadata: sanitizeForFirestore(params.metadata ?? {}),
+    enrichment_pending: params.enrichment_pending ?? false,
+    created_at: serverTimestamp(),
+    updated_at: serverTimestamp(),
+  });
+  const snap = await getDoc(ref);
+  return mapSavedLink(snap.id, snap.data() ?? params);
+}
+
+export async function updateSavedLink(
+  linkId: string,
+  updates: Partial<
+    Pick<
+      SavedLink,
+      | 'collection_ids'
+      | 'title'
+      | 'description'
+      | 'image_url'
+      | 'site_name'
+      | 'favicon_url'
+      | 'link_type'
+      | 'status'
+      | 'priority'
+      | 'tags'
+      | 'notes'
+      | 'timestamp_notes'
+      | 'metadata'
+      | 'enrichment_pending'
+    >
+  >
+): Promise<void> {
+  await setDoc(
+    doc(db, 'saved_links', linkId),
+    sanitizeForFirestore({ ...updates, updated_at: serverTimestamp() }),
+    { merge: true }
+  );
+}
+
+export async function deleteSavedLink(linkId: string): Promise<void> {
+  await deleteDoc(doc(db, 'saved_links', linkId));
+}
+
+export async function ensureDefaultSavedLinkCollections(userId: string): Promise<SavedLinkCollection[]> {
+  const existing = await getUserSavedLinkCollections(userId);
+  if (existing.length > 0) return existing;
+  const defaults = [
+    { name: 'Recipes', icon: 'utensils', color: '#f97316' },
+    { name: 'Watch later', icon: 'play', color: '#8b5cf6' },
+    { name: 'Articles', icon: 'newspaper', color: '#3b82f6' },
+    { name: 'Tools', icon: 'wrench', color: '#10b981' },
+  ];
+  const created: SavedLinkCollection[] = [];
+  for (let i = 0; i < defaults.length; i++) {
+    const c = await createSavedLinkCollection({
+      user_id: userId,
+      name: defaults[i].name,
+      icon: defaults[i].icon,
+      color: defaults[i].color,
+      position: i,
+    });
+    created.push(c);
+  }
+  return created;
+}
+
 export async function deleteAllUserData(userId: string): Promise<void> {
-  const [productsSnap, listsSnap, listProductsSnap, notificationsSnap, outfitsSnap, outfitProductsSnap] =
+  const [
+    productsSnap,
+    listsSnap,
+    listProductsSnap,
+    notificationsSnap,
+    outfitsSnap,
+    outfitProductsSnap,
+    standardListsSnap,
+    standardListItemsSnap,
+    standardListCommentsSnap,
+    savedLinksSnap,
+    savedLinkCollectionsSnap,
+  ] =
     await Promise.all([
       getDocs(query(collection(db, 'products'), where('user_id', '==', userId))),
       getDocs(query(collection(db, 'lists'), where('user_id', '==', userId))),
@@ -620,6 +1289,11 @@ export async function deleteAllUserData(userId: string): Promise<void> {
       getDocs(query(collection(db, 'notifications'), where('user_id', '==', userId))),
       getDocs(query(collection(db, 'outfits'), where('user_id', '==', userId))),
       getDocs(query(collection(db, 'outfit_products'), where('user_id', '==', userId))),
+      getDocs(query(collection(db, 'standard_lists'), where('user_id', '==', userId))),
+      getDocs(query(collection(db, 'standard_list_items'), where('user_id', '==', userId))),
+      getDocs(query(collection(db, 'standard_list_comments'), where('user_id', '==', userId))),
+      getDocs(query(collection(db, 'saved_links'), where('user_id', '==', userId))),
+      getDocs(query(collection(db, 'saved_link_collections'), where('user_id', '==', userId))),
     ]);
 
   const batch = writeBatch(db);
@@ -629,6 +1303,11 @@ export async function deleteAllUserData(userId: string): Promise<void> {
   notificationsSnap.docs.forEach((d) => batch.delete(d.ref));
   outfitProductsSnap.docs.forEach((d) => batch.delete(d.ref));
   outfitsSnap.docs.forEach((d) => batch.delete(d.ref));
+  standardListItemsSnap.docs.forEach((d) => batch.delete(d.ref));
+  standardListCommentsSnap.docs.forEach((d) => batch.delete(d.ref));
+  standardListsSnap.docs.forEach((d) => batch.delete(d.ref));
+  savedLinksSnap.docs.forEach((d) => batch.delete(d.ref));
+  savedLinkCollectionsSnap.docs.forEach((d) => batch.delete(d.ref));
   batch.delete(doc(db, 'profiles', userId));
   await batch.commit();
 }

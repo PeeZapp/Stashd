@@ -9,6 +9,7 @@ import {
   Info,
   GitCompare,
   Bookmark,
+  CheckSquare2,
   X,
   User,
   Shirt,
@@ -37,10 +38,12 @@ import NotificationsPanel from './NotificationsPanel';
 import CompareModal from './CompareModal';
 import BookmarkletModal from './BookmarkletModal';
 import OutfitModal from './OutfitModal';
+import StandardListsPanel from './StandardListsPanel';
+import SavedLinksPanel from './SavedLinksPanel';
 import { useDetailedEnrichmentRunner } from '../hooks/useDetailedEnrichmentRunner';
 
 type View = { type: 'lists' } | { type: 'list-detail'; listId: string };
-type DashboardTab = 'wishlists' | 'owned';
+type DashboardTab = 'wishlists' | 'lists' | 'saves' | 'owned';
 type OwnedSubtab = 'stash' | 'stash-lists' | 'outfits';
 
 interface DashboardProps {
@@ -134,7 +137,7 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
   useEffect(() => {
     if (!user) return;
     void loadData();
-  }, [user.uid]);
+  }, [user?.uid]);
 
   // When outfits refresh, merge server data into the open editor. Do not clear the editor if
   // the outfit is missing from the array (e.g. outfits query failed) — that would close the modal
@@ -159,7 +162,18 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
     try {
       const data = await getUserListsWithProducts(user.uid);
       setListsWithProducts(data);
-      setAllLists(data.map(({ products: _p, ...l }) => l as List));
+      setAllLists(
+        data.map(({ id, user_id, name, scope, is_shared, share_token, created_at, updated_at }) => ({
+          id,
+          user_id,
+          name,
+          scope,
+          is_shared,
+          share_token,
+          created_at,
+          updated_at,
+        }))
+      );
     } catch (error) {
       console.error('Error loading lists:', error);
     }
@@ -688,18 +702,26 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
               Welcome back, {profile?.name || 'there'}
             </h1>
             <p className="text-gray-600">
-              {wishlistListsWithProducts.length} wishlist{wishlistListsWithProducts.length !== 1 ? 's' : ''}
-              {stashListsWithProducts.length > 0 && (
-                <span className="text-gray-400">
-                  {' '}
-                  · {stashListsWithProducts.length} stash list{stashListsWithProducts.length !== 1 ? 's' : ''}
-                </span>
+              {dashboardTab === 'lists' ? (
+                'Simple lists for anything outside your product wishlists'
+              ) : dashboardTab === 'saves' ? (
+                'Save and organize recipes, videos, articles, and links from anywhere'
+              ) : (
+                <>
+                  {wishlistListsWithProducts.length} wishlist{wishlistListsWithProducts.length !== 1 ? 's' : ''}
+                  {stashListsWithProducts.length > 0 && (
+                    <span className="text-gray-400">
+                      {' '}
+                      · {stashListsWithProducts.length} stash list{stashListsWithProducts.length !== 1 ? 's' : ''}
+                    </span>
+                  )}
+                </>
               )}
             </p>
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
-            {listsWithProducts.some((l) => l.products.length > 0) && (
+            {dashboardTab !== 'lists' && dashboardTab !== 'saves' && listsWithProducts.some((l) => l.products.length > 0) && (
               <div className="relative">
                 <button
                   onClick={handleRefreshAll}
@@ -735,7 +757,7 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
         </div>
 
         {/* Refresh info tooltip */}
-        {showRefreshInfo && (
+        {dashboardTab !== 'lists' && dashboardTab !== 'saves' && showRefreshInfo && (
           <div className="mb-4 px-4 py-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800 flex items-start justify-between gap-3">
             <div className="flex items-start space-x-2">
               <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
@@ -750,14 +772,14 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
         )}
 
         {/* Refresh status message */}
-        {refreshAllStatus && !refreshingAll && (
+        {dashboardTab !== 'lists' && dashboardTab !== 'saves' && refreshAllStatus && !refreshingAll && (
           <div className="mb-4 px-4 py-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800 flex items-center justify-between">
             <span>{refreshAllStatus}</span>
             <button onClick={() => setRefreshAllStatus(null)} className="text-blue-400 hover:text-blue-600 ml-4 text-xs">Dismiss</button>
           </div>
         )}
 
-        {pendingDetailedProducts.length > 0 && (
+        {dashboardTab !== 'lists' && dashboardTab !== 'saves' && pendingDetailedProducts.length > 0 && (
           <div className="mb-4 px-4 py-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-950 flex flex-wrap items-center justify-between gap-3">
             <span>
               <strong>{pendingDetailedProducts.length}</strong> quick-add link
@@ -790,6 +812,28 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
             }`}
           >
             Wishlists
+          </button>
+          <button
+            onClick={() => setDashboardTab('lists')}
+            className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px flex items-center space-x-1.5 ${
+              dashboardTab === 'lists'
+                ? 'border-gray-900 text-gray-900'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            <CheckSquare2 className="w-4 h-4" />
+            <span>Lists</span>
+          </button>
+          <button
+            onClick={() => setDashboardTab('saves')}
+            className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px flex items-center space-x-1.5 ${
+              dashboardTab === 'saves'
+                ? 'border-gray-900 text-gray-900'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            <Bookmark className="w-4 h-4" />
+            <span>Saves</span>
           </button>
           <button
             onClick={() => setDashboardTab('owned')}
@@ -994,6 +1038,12 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
             )}
           </>
         )}
+
+        {/* ── Standard lists tab ── */}
+        {dashboardTab === 'lists' && user && <StandardListsPanel userId={user.uid} />}
+
+        {/* ── Saves tab ── */}
+        {dashboardTab === 'saves' && user && <SavedLinksPanel userId={user.uid} />}
 
         {/* ── Owned tab ── */}
         {dashboardTab === 'owned' && (

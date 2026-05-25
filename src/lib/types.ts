@@ -100,3 +100,157 @@ export interface ListWithProducts extends List {
   productCount?: number;
   totalCost?: number;
 }
+
+/** 0 = none, 1 = low, 2 = medium, 3 = high, 4 = urgent */
+export type StandardListPriority = 0 | 1 | 2 | 3 | 4;
+export type StandardListRecurrence = 'none' | 'daily' | 'weekly' | 'monthly';
+
+export interface StandardList {
+  id: string;
+  user_id: string;
+  name: string;
+  description: string | null;
+  is_pinned: boolean;
+  is_shared: boolean;
+  share_token: string | null;
+  collaborator_emails: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StandardListItem {
+  id: string;
+  user_id: string;
+  list_id: string;
+  parent_id: string | null;
+  text: string;
+  notes: string | null;
+  tags: string[];
+  priority: StandardListPriority;
+  due_at: string | null;
+  recurrence: StandardListRecurrence;
+  link_url: string | null;
+  link_title: string | null;
+  product_id: string | null;
+  image_urls: string[];
+  is_completed: boolean;
+  position: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StandardListItemTreeNode extends StandardListItem {
+  children: StandardListItemTreeNode[];
+}
+
+export interface StandardListTemplate {
+  id: string;
+  name: string;
+  description: string;
+  items: string[];
+}
+
+export interface StandardListComment {
+  id: string;
+  list_id: string;
+  item_id: string;
+  user_id: string;
+  author_name: string;
+  body: string;
+  created_at: string;
+}
+
+/** Rich URL library — recipes, videos, articles, tools, etc. */
+export type SavedLinkType =
+  | 'recipe'
+  | 'video'
+  | 'article'
+  | 'tool'
+  | 'place'
+  | 'product'
+  | 'other';
+
+export type SavedLinkStatus =
+  | 'saved'
+  | 'try_next'
+  | 'tried'
+  | 'liked'
+  | 'not_for_me'
+  | 'archived';
+
+/** 0 = none, 1 = low, 2 = medium, 3 = high, 4 = urgent */
+export type SavedLinkPriority = 0 | 1 | 2 | 3 | 4;
+
+export interface SavedLinkMetadata {
+  /** Recipe */
+  ingredients?: string[];
+  cook_time_minutes?: number | null;
+  total_time_minutes?: number | null;
+  servings?: string | null;
+  cuisine?: string | null;
+  diet_tags?: string[];
+  /** Video */
+  creator?: string | null;
+  duration?: string | null;
+  platform?: string | null;
+  embed_url?: string | null;
+  /** Article */
+  author?: string | null;
+  published_at?: string | null;
+}
+
+export interface SavedLinkTimestampNote {
+  id: string;
+  label: string;
+  timecode: string;
+  seconds: number | null;
+  note: string;
+  created_at: string;
+}
+
+export interface SavedLinkCollection {
+  id: string;
+  user_id: string;
+  name: string;
+  description: string | null;
+  color: string | null;
+  icon: string | null;
+  position: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SavedLink {
+  id: string;
+  user_id: string;
+  collection_ids: string[];
+  url: string;
+  canonical_url: string;
+  title: string;
+  description: string | null;
+  image_url: string | null;
+  site_name: string | null;
+  favicon_url: string | null;
+  link_type: SavedLinkType;
+  status: SavedLinkStatus;
+  priority: SavedLinkPriority;
+  tags: string[];
+  notes: string | null;
+  timestamp_notes: SavedLinkTimestampNote[];
+  metadata: SavedLinkMetadata;
+  enrichment_pending: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ScrapedLink {
+  url: string;
+  canonical_url: string | null;
+  title: string | null;
+  description: string | null;
+  image_url: string | null;
+  site_name: string | null;
+  favicon_url: string | null;
+  link_type: SavedLinkType;
+  metadata: SavedLinkMetadata;
+}

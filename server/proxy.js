@@ -885,6 +885,277 @@ async function extractProductData(html, url) {
   };
 }
 
+// ── Link metadata (recipes, videos, articles) ───────────────
+
+function parseDurationIso8601(raw) {
+  if (!raw || typeof raw !== 'string') return null;
+  const m = /PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/i.exec(raw);
+  if (!m) return raw;
+  const h = parseInt(m[1] || '0', 10);
+  const min = parseInt(m[2] || '0', 10);
+  const s = parseInt(m[3] || '0', 10);
+  const parts = [];
+  if (h) parts.push(`${h}h`);
+  if (min) parts.push(`${min}m`);
+  if (s && !h && !min) parts.push(`${s}s`);
+  return parts.join(' ') || null;
+}
+
+function parseJsonLdForLink(html) {
+  const scriptPattern =
+    /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  let match;
+  const linkTypes = [
+    'recipe',
+    'videoobject',
+    'article',
+    'newsarticle',
+    'blogposting',
+    'webpage',
+    'softwareapplication',
+  ];
+  while ((match = scriptPattern.exec(html)) !== null) {
+    try {
+      const data = JSON.parse(match[1].trim());
+      const items = Array.isArray(data) ? data : data['@graph'] ? data['@graph'] : [data];
+      for (const item of items) {
+        if (typeof item !== 'object' || item === null) continue;
+        const type = item['@type'];
+        const typeStr = (Array.isArray(type) ? type.join(' ') : String(type ?? '')).toLowerCase();
+        if (!linkTypes.some((t) => typeStr.includes(t))) continue;
+
+        const result = { metadata: {} };
+        if (typeof item.name === 'string') result.title = item.name;
+        if (typeof item.headline === 'string') result.title = item.headline;
+        if (typeof item.description === 'string') result.description = item.description;
+
+        const img = item.image;
+        if (typeof img === 'string') result.image_url = img;
+        else if (Array.isArray(img) && img.length > 0)
+          result.image_url = typeof img[0] === 'string' ? img[0] : img[0]?.url;
+        else if (img && typeof img === 'object') result.image_url = img.url;
+
+        if (typeStr.includes('recipe')) {
+          result.link_type = 'recipe';
+          if (Array.isArray(item.recipeIngredient))
+            result.metadata.ingredients = item.recipeIngredient.filter((x) => typeof x === 'string');
+          const cook = item.cookTime || item.prepTime;
+          if (cook) result.metadata.cook_time_minutes = parseDurationMinutes(cook);
+          if (item.totalTime) result.metadata.total_time_minutes = parseDurationMinutes(item.totalTime);
+          if (item.recipeYield) result.metadata.servings = String(item.recipeYield);
+          if (item.recipeCuisine) result.metadata.cuisine = String(item.recipeCuisine);
+        } else if (typeStr.includes('video')) {
+          result.link_type = 'video';
+          if (item.uploadDate) result.metadata.published_at = String(item.uploadDate);
+          if (item.duration) result.metadata.duration = parseDurationIso8601(String(item.duration));
+          const author = item.author;
+          if (typeof author === 'string') result.metadata.creator = author;
+          else if (author && typeof author === 'object' && author.name)
+            result.metadata.creator = String(author.name);
+          if (item.embedUrl) result.metadata.embed_url = String(item.embedUrl);
+        } else if (typeStr.includes('article') || typeStr.includes('blog')) {
+          result.link_type = 'article';
+          const author = item.author;
+          if (typeof author === 'string') result.metadata.author = author;
+          else if (author && typeof author === 'object' && author.name)
+            result.metadata.author = String(author.name);
+          if (item.datePublished) result.metadata.published_at = String(item.datePublished);
+        } else if (typeStr.includes('software')) {
+          result.link_type = 'tool';
+        }
+
+        if (result.title || result.image_url) return result;
+      }
+    } catch {
+      /* next script */
+    }
+  }
+  return null;
+}
+
+function parseDurationMinutes(iso) {
+  if (!iso || typeof iso !== 'string') return null;
+  const m = /PT(?:(\d+)H)?(?:(\d+)M)?/i.exec(iso);
+  if (!m) return null;
+  const h = parseInt(m[1] || '0', 10);
+  const min = parseInt(m[2] || '0', 10);
+  return h * 60 + min || null;
+}
+
+function extractCanonicalUrl(html, fallbackUrl) {
+  const patterns = [
+    /<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i,
+    /<link[^>]+href=["']([^"']+)["'][^>]+rel=["']canonical["']/i,
+  ];
+  for (const p of patterns) {
+    const m = p.exec(html);
+    if (m) {
+      try {
+        return new URL(m[1].trim(), fallbackUrl).href;
+      } catch {
+        return m[1].trim();
+      }
+    }
+  }
+  return fallbackUrl;
+}
+
+function detectLinkPlatform(url) {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    if (host.includes('youtube.com') || host.includes('youtu.be')) return 'YouTube';
+    if (host.includes('tiktok.com')) return 'TikTok';
+    if (host.includes('instagram.com')) return 'Instagram';
+    if (host.includes('pinterest.')) return 'Pinterest';
+    if (host.includes('twitter.com') || host.includes('x.com')) return 'X';
+    if (host.includes('reddit.com')) return 'Reddit';
+    if (host.includes('facebook.com')) return 'Facebook';
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function getYouTubeVideoId(url) {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.toLowerCase();
+    if (host.includes('youtu.be')) return u.pathname.split('/').filter(Boolean)[0] || null;
+    if (host.includes('youtube.com')) {
+      if (u.pathname.startsWith('/shorts/')) return u.pathname.split('/').filter(Boolean)[1] || null;
+      return u.searchParams.get('v');
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+async function fetchYouTubeOembed(url) {
+  const videoId = getYouTubeVideoId(url);
+  if (!videoId) return null;
+  try {
+    const res = await fetch(
+      `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`,
+      {
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(10_000),
+      }
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    return {
+      url,
+      canonical_url: `https://www.youtube.com/watch?v=${videoId}`,
+      title: typeof data.title === 'string' ? data.title : null,
+      description: null,
+      image_url:
+        typeof data.thumbnail_url === 'string'
+          ? data.thumbnail_url
+          : `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+      site_name: 'YouTube',
+      favicon_url: 'https://www.youtube.com/s/desktop/favicon.ico',
+      link_type: 'video',
+      metadata: {
+        platform: 'YouTube',
+        creator: typeof data.author_name === 'string' ? data.author_name : null,
+        embed_url: `https://www.youtube.com/embed/${videoId}`,
+      },
+      _debug: { source: 'youtube_oembed' },
+    };
+  } catch {
+    return null;
+  }
+}
+
+function detectLinkTypeFromSignals(url, ogType, ldType) {
+  if (ldType) return ldType;
+  const platform = detectLinkPlatform(url);
+  if (platform) return 'video';
+  const og = (ogType || '').toLowerCase();
+  if (og.includes('video')) return 'video';
+  if (og.includes('article')) return 'article';
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    if (/recipe|allrecipes|foodnetwork|bonappetit|seriouseats|tasty|delish/.test(host))
+      return 'recipe';
+  } catch {
+    /* ignore */
+  }
+  return 'other';
+}
+
+function shallowHtmlMissingLinkMetadata(html) {
+  return (
+    !extractOgTag(html, 'title') &&
+    !extractMetaName(html, 'twitter:title') &&
+    !/<title[^>]*>[^<]+<\/title>/i.test(html)
+  );
+}
+
+async function extractLinkData(html, url) {
+  const ld = parseJsonLdForLink(html);
+  let title = ld?.title ?? null;
+  let description = ld?.description ?? null;
+  let image_url = ld?.image_url ?? null;
+  let link_type = ld?.link_type ?? null;
+  const metadata = { ...(ld?.metadata ?? {}) };
+
+  title =
+    title ??
+    extractOgTag(html, 'title') ??
+    extractMetaName(html, 'twitter:title');
+  description =
+    description ??
+    extractOgTag(html, 'description') ??
+    extractMetaName(html, 'description') ??
+    extractMetaName(html, 'twitter:description');
+  image_url =
+    image_url ??
+    extractOgTag(html, 'image') ??
+    extractOgTag(html, 'image:secure_url') ??
+    extractMetaName(html, 'twitter:image');
+
+  const site_name = extractOgTag(html, 'site_name') ?? storeFromUrl(url);
+  const ogType = extractOgTag(html, 'type');
+  link_type = detectLinkTypeFromSignals(url, ogType, link_type);
+
+  const platform = detectLinkPlatform(url);
+  if (platform && !metadata.platform) metadata.platform = platform;
+
+  if (!title) {
+    const tm = /<title[^>]*>([^<]+)<\/title>/i.exec(html);
+    if (tm) title = tm[1].trim().replace(/\s*[-|·]\s*[^-|·]+$/, '').trim() || tm[1].trim();
+  }
+
+  let favicon_url = null;
+  const favMatch =
+    /<link[^>]+rel=["'](?:shortcut )?icon["'][^>]+href=["']([^"']+)["']/i.exec(html) ||
+    /<link[^>]+href=["']([^"']+)["'][^>]+rel=["'](?:shortcut )?icon["']/i.exec(html);
+  if (favMatch) {
+    try {
+      favicon_url = new URL(favMatch[1].trim(), url).href;
+    } catch {
+      favicon_url = favMatch[1].trim();
+    }
+  }
+
+  const canonical_url = extractCanonicalUrl(html, url);
+
+  return {
+    url,
+    canonical_url,
+    title,
+    description,
+    image_url,
+    site_name,
+    favicon_url,
+    link_type: link_type || 'other',
+    metadata,
+    _debug: { htmlLength: html.length, hasJsonLd: ld !== null },
+  };
+}
+
 // ── Scrape endpoint ─────────────────────────────────────────
 
 /** Outer cap for scrapeWithPlaywright (must exceed goto + networkidle + selector waits). */
@@ -1025,6 +1296,61 @@ app.get(['/scrape', '/api/scrape'], async (req, res) => {
     });
   }
 
+  res.json(result);
+});
+
+app.get(['/scrape-link', '/api/scrape-link'], async (req, res) => {
+  const rawUrl = req.query.url;
+  if (rawUrl == null || typeof rawUrl !== 'string' || !String(rawUrl).trim()) {
+    return res.status(400).json({ error: 'url query param required' });
+  }
+  const url = normalizeScrapeUrl(rawUrl);
+  if (!url) {
+    return res.status(400).json({ error: 'url query param required' });
+  }
+
+  const youtubeResult = await fetchYouTubeOembed(url);
+  if (youtubeResult) return res.json(youtubeResult);
+
+  let html = '';
+  let httpStatus = 200;
+  try {
+    const r = await fetchHtmlImpersonated(url);
+    httpStatus = r.status;
+    html = r.body;
+  } catch (err) {
+    return res.status(502).json({ error: `Fetch failed: ${err.message}` });
+  }
+
+  if (!html || html.length < 200) {
+    return res.status(502).json({ error: 'Empty or too-short response from target site' });
+  }
+
+  const botWall = isBotProtected(html, httpStatus);
+  const missingMeta = !botWall && shallowHtmlMissingLinkMetadata(html) && !extractOgTag(html, 'image');
+
+  if (botWall || missingMeta) {
+    console.log(
+      `[scrape-link] ${botWall ? 'bot wall' : 'sparse metadata'} for ${url} — trying Playwright`
+    );
+    try {
+      const playwrightHtml = await Promise.race([
+        scrapeWithPlaywright(url, { variant: 'desktop' }),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Playwright timed out')), PLAYWRIGHT_TIMEOUT_MS)
+        ),
+      ]);
+      if (playwrightHtml && playwrightHtml.length > 200) html = playwrightHtml;
+    } catch (err) {
+      console.warn(`[scrape-link] Playwright failed: ${err.message}`);
+    }
+  }
+
+  const result = await extractLinkData(html, url);
+  if (!result.title && !result.image_url) {
+    result.title = storeFromUrl(url) || url;
+    result.link_type = detectLinkTypeFromSignals(url, null, result.link_type);
+  }
   res.json(result);
 });
 

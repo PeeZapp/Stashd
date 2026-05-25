@@ -31,6 +31,27 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/outfits/$(outfitId)).data.user_id == request.auth.uid;
     }
 
+    function isStandardListOwnerForCreate(listId) {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/standard_lists/$(listId))
+        && get(/databases/$(database)/documents/standard_lists/$(listId)).data.user_id == request.auth.uid;
+    }
+
+    function canAccessStandardList(listId) {
+      let list = get(/databases/$(database)/documents/standard_lists/$(listId)).data;
+      return isSignedIn()
+        && (list.user_id == request.auth.uid
+          || (request.auth.token.email in list.collaborator_emails)
+          || list.is_shared == true);
+    }
+
+    function canEditStandardList(listId) {
+      let list = get(/databases/$(database)/documents/standard_lists/$(listId)).data;
+      return isSignedIn()
+        && (list.user_id == request.auth.uid
+          || (request.auth.token.email in list.collaborator_emails));
+    }
+
     match /profiles/{userId} {
       allow read, create, update: if isSignedIn() && request.auth.uid == userId;
       allow delete: if isSignedIn() && request.auth.uid == userId;
@@ -89,6 +110,51 @@ service cloud.firestore {
         && isOutfitOwnerForCreate(request.resource.data.outfit_id)
         && isProductOwnerForCreate(request.resource.data.product_id);
       allow update: if false;
+    }
+
+    match /standard_lists/{listId} {
+      allow read: if (isSignedIn()
+        && (resource.data.user_id == request.auth.uid
+          || (request.auth.token.email in resource.data.collaborator_emails)))
+        || resource.data.is_shared == true;
+      allow update, delete: if isSignedIn()
+        && resource.data.user_id == request.auth.uid;
+      allow create: if isSignedIn()
+        && request.resource.data.user_id == request.auth.uid;
+    }
+
+    match /standard_list_items/{itemId} {
+      allow read: if canAccessStandardList(resource.data.list_id);
+      allow update, delete: if canEditStandardList(resource.data.list_id);
+      allow create: if isSignedIn()
+        && exists(/databases/$(database)/documents/standard_lists/$(request.resource.data.list_id))
+        && request.resource.data.user_id == get(/databases/$(database)/documents/standard_lists/$(request.resource.data.list_id)).data.user_id
+        && canEditStandardList(request.resource.data.list_id);
+    }
+
+    match /standard_list_comments/{commentId} {
+      allow read: if canAccessStandardList(resource.data.list_id);
+      allow delete: if isSignedIn()
+        && (resource.data.user_id == request.auth.uid
+          || get(/databases/$(database)/documents/standard_lists/$(resource.data.list_id)).data.user_id == request.auth.uid);
+      allow create: if isSignedIn()
+        && request.resource.data.user_id == request.auth.uid
+        && canEditStandardList(request.resource.data.list_id);
+      allow update: if false;
+    }
+
+    match /saved_link_collections/{collectionId} {
+      allow read, update, delete: if isSignedIn()
+        && resource.data.user_id == request.auth.uid;
+      allow create: if isSignedIn()
+        && request.resource.data.user_id == request.auth.uid;
+    }
+
+    match /saved_links/{linkId} {
+      allow read, update, delete: if isSignedIn()
+        && resource.data.user_id == request.auth.uid;
+      allow create: if isSignedIn()
+        && request.resource.data.user_id == request.auth.uid;
     }
   }
 }

@@ -1,14 +1,40 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isImageWrite() {
+      return request.resource.size < 8 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    function canEditStandardListItem(userId, itemId) {
+      let item = firestore.get(/databases/(default)/documents/standard_list_items/$(itemId)).data;
+      let list = firestore.get(/databases/(default)/documents/standard_lists/$(item.list_id)).data;
+      return isSignedIn()
+        && item.user_id == userId
+        && (list.user_id == request.auth.uid
+          || (request.auth.token.email != null && request.auth.token.email in list.collaborator_emails));
+    }
+
     // Outfit / look photos (user uploads)
     match /users/{userId}/outfitLooks/{outfitId}/{fileName} {
       allow read: if true;
-      allow write: if request.auth != null
-        && request.auth.uid == userId
-        && request.resource.size < 8 * 1024 * 1024
-        && request.resource.contentType.matches('image/.*');
-      allow delete: if request.auth != null && request.auth.uid == userId;
+      allow write: if isOwner(userId) && isImageWrite();
+      allow delete: if isOwner(userId);
+    }
+
+    // Standard list item image attachments
+    match /users/{userId}/standardListItems/{itemId}/{fileName} {
+      allow read: if true;
+      allow write: if (isOwner(userId) || canEditStandardListItem(userId, itemId)) && isImageWrite();
+      allow delete: if isOwner(userId) || canEditStandardListItem(userId, itemId);
     }
   }
 }

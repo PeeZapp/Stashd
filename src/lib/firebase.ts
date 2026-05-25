@@ -16,6 +16,7 @@ if (
   !firebaseConfig.apiKey ||
   !firebaseConfig.authDomain ||
   !firebaseConfig.projectId ||
+  !firebaseConfig.storageBucket ||
   !firebaseConfig.appId
 ) {
   throw new Error('Missing Firebase environment variables');

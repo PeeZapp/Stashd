@@ -120,7 +120,7 @@ async function fetchViaCorsProxy(url: string): Promise<ScrapedProduct | null> {
 
   let title: string | null = null;
   let current_price: number | null = null;
-  let original_price: number | null = null;
+  const original_price: number | null = null;
   let image_url: string | null = null;
   let store_name: string | null = null;
   let description: string | null = null;
