@@ -3,7 +3,7 @@ import OpenAI from 'openai';
 import { chromium as chromiumCore } from 'playwright-core';
 import { chromium as chromiumExtra } from 'playwright-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
-import { gotScraping } from 'got-scraping';
+import { Impit } from 'impit';
 import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -123,34 +123,33 @@ function buildBrowserHeadersForUrl(urlStr) {
   };
 }
 
+let impitClient;
+function getImpitClient() {
+  if (!impitClient) {
+    impitClient = new Impit({ browser: 'chrome' });
+  }
+  return impitClient;
+}
+
 /**
- * HTTP fetch that mimics real Chrome (header ordering, h2 frame order, TLS preferences)
- * via got-scraping, which is significantly harder for CDNs to fingerprint than Node `fetch`.
- * Falls back to native fetch if got-scraping fails to initialize for any reason.
+ * HTTP fetch that mimics real Chrome (header ordering, h2 frame order, TLS fingerprints)
+ * via impit, which is significantly harder for CDNs to fingerprint than Node `fetch`.
+ * Falls back to native fetch if impit fails for any reason.
  */
 async function fetchHtmlImpersonated(url, { timeoutMs = 15_000 } = {}) {
   try {
-    const res = await gotScraping({
-      url,
-      timeout: { request: timeoutMs },
-      throwHttpErrors: false,
-      followRedirect: true,
-      decompress: true,
-      responseType: 'text',
-      headerGeneratorOptions: {
-        browsers: [{ name: 'chrome', minVersion: 120 }],
-        devices: ['desktop'],
-        operatingSystems: ['windows', 'macos'],
-      },
+    const response = await getImpitClient().fetch(url, {
       headers: {
         'Accept-Language': inferAcceptLanguageFromUrl(url),
         Referer: new URL(url).origin + '/',
       },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(timeoutMs),
     });
-    const body = typeof res.body === 'string' ? res.body : String(res.body ?? '');
-    return { status: res.statusCode ?? 0, body };
-  } catch (gotErr) {
-    console.warn(`[fetch] got-scraping failed (${gotErr.message}); falling back to node fetch`);
+    const body = await response.text();
+    return { status: response.status, body };
+  } catch (impitErr) {
+    console.warn(`[fetch] impit failed (${impitErr.message}); falling back to node fetch`);
     const response = await fetch(url, {
       headers: { ...buildBrowserHeadersForUrl(url), Referer: new URL(url).origin + '/' },
       redirect: 'follow',
@@ -1174,7 +1173,7 @@ app.get(['/scrape', '/api/scrape'], async (req, res) => {
     return res.status(400).json({ error: 'url query param required' });
   }
 
-  // Step 1: fast HTTP fetch (Chrome-like TLS/header ordering via got-scraping)
+  // Step 1: fast HTTP fetch (Chrome-like TLS/header ordering via impit)
   let html = '';
   let httpStatus = 200;
   try {

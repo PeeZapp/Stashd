@@ -1,5 +1,5 @@
 import express from 'express';
-import { gotScraping } from 'got-scraping';
+import { Impit } from 'impit';
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -61,6 +61,14 @@ function inferAcceptLanguageFromUrl(urlStr) {
   return BROWSER_HEADERS['Accept-Language'];
 }
 
+let impitClient;
+function getImpitClient() {
+  if (!impitClient) {
+    impitClient = new Impit({ browser: 'chrome' });
+  }
+  return impitClient;
+}
+
 function authMiddleware(req, res, next) {
   const authHeader = req.headers['authorization'];
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -95,31 +103,22 @@ app.get('/fetch', authMiddleware, async (req, res) => {
   }
 
   try {
-    // Prefer got-scraping (Chrome-like header/TLS ordering) with native fetch fallback
+    // Prefer impit (Chrome-like header/TLS fingerprinting) with native fetch fallback
     let status = 0;
     let body = '';
     try {
-      const r = await gotScraping({
-        url,
-        timeout: { request: 30_000 },
-        throwHttpErrors: false,
-        followRedirect: true,
-        decompress: true,
-        responseType: 'text',
-        headerGeneratorOptions: {
-          browsers: [{ name: 'chrome', minVersion: 120 }],
-          devices: ['desktop'],
-          operatingSystems: ['windows', 'macos'],
-        },
+      const response = await getImpitClient().fetch(url, {
         headers: {
           'Accept-Language': inferAcceptLanguageFromUrl(url),
           Referer: parsedUrl.origin + '/',
         },
+        redirect: 'follow',
+        signal: AbortSignal.timeout(30_000),
       });
-      status = r.statusCode ?? 0;
-      body = typeof r.body === 'string' ? r.body : String(r.body ?? '');
-    } catch (gotErr) {
-      console.warn(`[pi-proxy] got-scraping failed (${gotErr.message}); falling back to node fetch`);
+      status = response.status;
+      body = await response.text();
+    } catch (impitErr) {
+      console.warn(`[pi-proxy] impit failed (${impitErr.message}); falling back to node fetch`);
       const response = await fetch(url, {
         headers: {
           ...BROWSER_HEADERS,
