@@ -59,6 +59,8 @@ Copy `.env.example` to `.env` (or `.env.local`) and fill in values from the [Fir
 
 **Firestore security rules** — if you see `Missing or insufficient permissions` when saving products or adding them to lists, open **Firebase console → Firestore Database → Rules**, paste the contents of [`firestore.rules`](./firestore.rules) from this repo, and **Publish**. (Or run `firebase deploy --only firestore:rules` from a machine with the [Firebase CLI](https://firebase.google.com/docs/cli) linked to the same project.)
 
+**App Check** — the same `Missing or insufficient permissions` error also appears when **App Check enforcement** is turned on for Cloud Firestore but the web app is not sending an App Check token (this app did not initialize App Check until recently). In [Firebase Console → App Check](https://console.firebase.google.com/project/stashd-82e87/appcheck), open **Cloud Firestore** and set enforcement to **Off** (or **Unenforced**) to confirm. To keep enforcement on, register the web app with reCAPTCHA v3, set `VITE_FIREBASE_APPCHECK_SITE_KEY` in `.env`, and for local dev optionally `VITE_FIREBASE_APPCHECK_DEBUG=true` plus a registered debug token (see `.env.example`).
+
 **Composite indexes** — `list_products` queries filter by `list_id` + `user_id` (and `product_id` + `user_id`). Deploy [`firestore.indexes.json`](./firestore.indexes.json) with `firebase deploy --only firestore:indexes`, or create the suggested composite indexes from the link in the browser console if Firestore reports a missing index.
 
 **Client (Vite)** — must be prefixed with `VITE_`:

@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { usePlaywrightStatus } from '../hooks/usePlaywrightStatus';
 import { useProxyStatus } from '../hooks/useProxyStatus';
+import { warmupScrapeService } from '../lib/warmupScrapeService';
 import { useAuth } from '../contexts/AuthContext';
 import { refreshProduct } from '../lib/refreshProduct';
 import type { Product, List, Outfit } from '../lib/types';
@@ -28,8 +29,15 @@ import {
   deleteProduct,
   getUserListsWithProducts,
   getUserOutfitsWithProducts,
+  getUnlistedProducts,
   updateList,
 } from '../lib/firestore';
+import { formatFirestoreError } from '../lib/firestoreAuth';
+import {
+  aggregateProductsForList,
+  countDirectSubLists,
+  isTopLevelList,
+} from '../lib/listHierarchy';
 import ProductCard from './ProductCard';
 import AddProductModal from './AddProductModal';
 import ProductDetailModal from './ProductDetailModal';
@@ -54,6 +62,7 @@ interface DashboardProps {
 export default function Dashboard({ prefillUrl, onNavigateToProfile }: DashboardProps) {
   const { signOut, profile, user } = useAuth();
   const [listsWithProducts, setListsWithProducts] = useState<ListWithProducts[]>([]);
+  const [unlistedProducts, setUnlistedProducts] = useState<Product[]>([]);
   const [outfitsWithProducts, setOutfitsWithProducts] = useState<
     Array<{ outfit: Outfit; products: Product[] }>
   >([]);
@@ -67,6 +76,9 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
   const [creatingList, setCreatingList] = useState(false);
   const [newListName, setNewListName] = useState('');
   const [createListError, setCreateListError] = useState('');
+  const [creatingSubList, setCreatingSubList] = useState(false);
+  const [newSubListName, setNewSubListName] = useState('');
+  const [createSubListError, setCreateSubListError] = useState('');
   const [selectedOwnedIdsForNewStashList, setSelectedOwnedIdsForNewStashList] = useState<string[]>([]);
   const playwrightStatus = usePlaywrightStatus();
   const proxyStatus = useProxyStatus();
@@ -124,6 +136,7 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
   const [refreshAllStatus, setRefreshAllStatus] = useState<string | null>(null);
   const [showRefreshInfo, setShowRefreshInfo] = useState(false);
   const [showBookmarklet, setShowBookmarklet] = useState(false);
+  const [detailedEnrichBlockedMsg, setDetailedEnrichBlockedMsg] = useState<string | null>(null);
 
   // Compare mode (list-detail view)
   const [compareMode, setCompareMode] = useState(false);
@@ -138,6 +151,12 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
     if (!user) return;
     void loadData();
   }, [user?.uid]);
+
+  useEffect(() => {
+    if (showAddProduct && playwrightStatus !== 'ready') {
+      void warmupScrapeService();
+    }
+  }, [showAddProduct, playwrightStatus]);
 
   // When outfits refresh, merge server data into the open editor. Do not clear the editor if
   // the outfit is missing from the array (e.g. outfits query failed) — that would close the modal
@@ -160,14 +179,19 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
   const loadLists = async () => {
     if (!user) return;
     try {
-      const data = await getUserListsWithProducts(user.uid);
+      const [data, unlisted] = await Promise.all([
+        getUserListsWithProducts(user.uid),
+        getUnlistedProducts(user.uid),
+      ]);
       setListsWithProducts(data);
+      setUnlistedProducts(unlisted);
       setAllLists(
-        data.map(({ id, user_id, name, scope, is_shared, share_token, created_at, updated_at }) => ({
+        data.map(({ id, user_id, name, scope, parent_list_id, is_shared, share_token, created_at, updated_at }) => ({
           id,
           user_id,
           name,
           scope,
+          parent_list_id: parent_list_id ?? null,
           is_shared,
           share_token,
           created_at,
@@ -193,6 +217,12 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
     () => allLists.filter((l) => l.scope !== 'stash'),
     [allLists]
   );
+
+  const addProductInitialListId = useMemo(() => {
+    if (view.type !== 'list-detail') return undefined;
+    const list = allLists.find((entry) => entry.id === view.listId);
+    return list && list.scope !== 'stash' ? list.id : undefined;
+  }, [view, allLists]);
 
   const pendingDetailedProducts = useMemo(() => {
     const m = new Map<string, Product>();
@@ -300,13 +330,57 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
       }
     } catch (error) {
       console.error(error);
-      setCreateListError('Could not create list. Please try again.');
+      setCreateListError(formatFirestoreError(error));
       return;
     }
     setNewListName('');
     setSelectedOwnedIdsForNewStashList([]);
     setCreatingList(false);
     await loadData();
+  };
+
+  const handleCreateSubList = async (e: React.FormEvent, parentListId: string) => {
+    e.preventDefault();
+    if (!newSubListName.trim() || !user) return;
+    setCreateSubListError('');
+    try {
+      await createList({
+        user_id: user.uid,
+        name: newSubListName.trim(),
+        share_token: crypto.randomUUID(),
+        parent_list_id: parentListId,
+      });
+    } catch (error) {
+      console.error(error);
+      setCreateSubListError(formatFirestoreError(error));
+      return;
+    }
+    setNewSubListName('');
+    setCreatingSubList(false);
+    await loadData();
+  };
+
+  const handleListDetailBack = () => {
+    exitCompareMode();
+    if (fullList?.parent_list_id) {
+      setView({ type: 'list-detail', listId: fullList.parent_list_id });
+      return;
+    }
+    setView({ type: 'lists' });
+  };
+
+  const goHome = () => {
+    exitCompareMode();
+    setView({ type: 'lists' });
+    setDashboardTab('wishlists');
+    goToOwnedSubtab('stash');
+    setCreatingList(false);
+    setCreatingSubList(false);
+    setNewListName('');
+    setNewSubListName('');
+    setCreateListError('');
+    setCreateSubListError('');
+    setSelectedOwnedIdsForNewStashList([]);
   };
 
   const goToOwnedSubtab = (sub: OwnedSubtab) => {
@@ -413,13 +487,16 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
       : null;
 
   const wishlistListsWithProducts = useMemo(
-    () => listsWithProducts.filter((l) => l.scope !== 'stash'),
+    () => listsWithProducts.filter((l) => l.scope !== 'stash' && isTopLevelList(l)),
     [listsWithProducts]
   );
   const stashListsWithProducts = useMemo(
-    () => listsWithProducts.filter((l) => l.scope === 'stash'),
+    () => listsWithProducts.filter((l) => l.scope === 'stash' && isTopLevelList(l)),
     [listsWithProducts]
   );
+
+  const topLevelWishlistCount = wishlistListsWithProducts.length;
+  const topLevelStashListCount = stashListsWithProducts.length;
 
   /** Owned items across all lists (for outfits picker) — not deleted when an outfit is removed. */
   const stashProducts = useMemo(() => {
@@ -461,6 +538,24 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
   const compareProducts =
     fullList?.products.filter((p) => selectedForCompare.includes(p.id)) ?? [];
 
+  const childListsWithProducts = useMemo(() => {
+    if (!fullList) return [];
+    return listsWithProducts.filter((list) => list.parent_list_id === fullList.id);
+  }, [fullList, listsWithProducts]);
+
+  const parentList = useMemo(() => {
+    if (!fullList?.parent_list_id) return null;
+    return allLists.find((list) => list.id === fullList.parent_list_id) ?? null;
+  }, [allLists, fullList?.parent_list_id]);
+
+  const fullListAggregateProducts = useMemo(() => {
+    if (!fullList) return [];
+    if (fullList.parent_list_id) return fullList.products;
+    return aggregateProductsForList(fullList.id, listsWithProducts, allLists);
+  }, [allLists, fullList, listsWithProducts]);
+
+  const fullListSubListCount = fullList ? countDirectSubLists(allLists, fullList.id) : 0;
+
   // ── Nav bar ───────────────────────────────────────────────
 
   const navBar = (
@@ -470,14 +565,21 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
           <div className="flex items-center space-x-3">
             {view.type === 'list-detail' ? (
               <button
-                onClick={() => { setView({ type: 'lists' }); exitCompareMode(); }}
+                onClick={handleListDetailBack}
                 className="flex items-center space-x-2 text-gray-700 hover:text-gray-900 transition-colors mr-1"
               >
                 <ArrowLeft className="w-5 h-5" />
               </button>
             ) : null}
-            <ShoppingBag className="w-7 h-7 text-gray-900" strokeWidth={1.5} />
-            <span className="text-xl font-semibold text-gray-900">Stashd</span>
+            <button
+              type="button"
+              onClick={goHome}
+              className="flex items-center space-x-2 text-gray-900 hover:opacity-80 transition-opacity"
+              title="Home"
+            >
+              <ShoppingBag className="w-7 h-7" strokeWidth={1.5} />
+              <span className="text-xl font-semibold">Stashd</span>
+            </button>
           </div>
 
           <div className="flex items-center space-x-2">
@@ -530,8 +632,10 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
   // ── List detail view ──────────────────────────────────────
 
   if (view.type === 'list-detail' && fullList) {
-    const hasSale = fullList.products.some((p) => p.is_on_sale);
-    const total = fullList.products.reduce((s, p) => s + (p.current_price ?? 0), 0);
+    const detailProducts = fullList.products;
+    const statsProducts = fullList.parent_list_id ? fullList.products : fullListAggregateProducts;
+    const hasSale = statsProducts.some((p) => p.is_on_sale);
+    const total = statsProducts.reduce((s, p) => s + (p.current_price ?? 0), 0);
 
     return (
       <div className="min-h-screen bg-gray-50">
@@ -539,15 +643,38 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
         <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
             <div>
+              {parentList && (
+                <button
+                  type="button"
+                  onClick={() => setView({ type: 'list-detail', listId: parentList.id })}
+                  className="text-sm text-gray-500 hover:text-gray-800 mb-1"
+                >
+                  {parentList.name}
+                </button>
+              )}
               <h1 className="text-3xl font-bold text-gray-900 mb-1">{fullList.name}</h1>
               {fullList.scope === 'stash' && (
                 <p className="text-sm text-gray-500 mb-2 max-w-xl">
                   Stash list — add items you own from the grid on <strong>Owned</strong> using product details, or move pieces here from your wishlists.
                 </p>
               )}
+              {!fullList.parent_list_id && fullListSubListCount > 0 && (
+                <p className="text-sm text-gray-500 mb-2 max-w-xl">
+                  Organize items into sub-lists below, or add products directly to this list.
+                </p>
+              )}
               <div className="flex flex-wrap items-center gap-3 text-gray-500 text-sm">
+                {!fullList.parent_list_id && fullListSubListCount > 0 && (
+                  <>
+                    <span>
+                      {fullListSubListCount} sub-list{fullListSubListCount !== 1 ? 's' : ''}
+                    </span>
+                    <span>·</span>
+                  </>
+                )}
                 <span>
-                  {fullList.products.length} item{fullList.products.length !== 1 ? 's' : ''}
+                  {statsProducts.length} item{statsProducts.length !== 1 ? 's' : ''}
+                  {!fullList.parent_list_id && fullListSubListCount > 0 ? ' total' : ''}
                 </span>
                 {total > 0 && (
                   <>
@@ -565,7 +692,7 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
             </div>
 
             <div className="flex items-center gap-2 flex-wrap">
-              {fullList.products.length >= 2 && (
+              {detailProducts.length >= 2 && (
                 <button
                   onClick={() => {
                     setCompareMode((m) => !m);
@@ -610,14 +737,121 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
             </div>
           )}
 
-          {fullList.products.length === 0 ? (
-            <div className="text-center py-20">
-              <ShoppingBag className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-              <h3 className="text-xl font-semibold text-gray-900 mb-2">No products in this list</h3>
-              <p className="text-gray-600 mb-6">
+          {!fullList.parent_list_id && (
+            <div className="mb-10">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                <h2 className="text-lg font-semibold text-gray-900">Sub-lists</h2>
+                {!creatingSubList && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCreatingSubList(true);
+                      setCreateSubListError('');
+                      setNewSubListName('');
+                    }}
+                    className="flex items-center space-x-2 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Add sub-list</span>
+                  </button>
+                )}
+              </div>
+
+              {creatingSubList && (
+                <form
+                  onSubmit={(e) => void handleCreateSubList(e, fullList.id)}
+                  className="mb-6 flex flex-wrap items-center gap-2"
+                >
+                  <input
+                    type="text"
+                    value={newSubListName}
+                    onChange={(e) => setNewSubListName(e.target.value)}
+                    placeholder="e.g. Pokemon Lego"
+                    className="flex-1 min-w-[12rem] px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent"
+                    autoFocus
+                  />
+                  <button
+                    type="submit"
+                    disabled={!newSubListName.trim()}
+                    className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors disabled:opacity-50"
+                  >
+                    Create
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCreatingSubList(false);
+                      setNewSubListName('');
+                      setCreateSubListError('');
+                    }}
+                    className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </form>
+              )}
+              {createSubListError && (
+                <p className="mb-4 text-sm text-red-600">{createSubListError}</p>
+              )}
+
+              {childListsWithProducts.length > 0 ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                  {childListsWithProducts.map((list) => (
+                    <ListCard
+                      key={list.id}
+                      list={list}
+                      statsProducts={list.products}
+                      onClick={() => setView({ type: 'list-detail', listId: list.id })}
+                      onDelete={() => void handleDeleteList(list.id)}
+                      onShare={() => void handleShareList(list)}
+                      onRename={(newName) => void handleRenameList(list.id, newName)}
+                    />
+                  ))}
+                </div>
+              ) : !creatingSubList ? (
+                <p className="text-sm text-gray-500 border border-dashed border-gray-200 rounded-xl px-4 py-8 text-center">
+                  No sub-lists yet. Break this list into categories like Pokemon Lego or Marvel Lego.
+                </p>
+              ) : null}
+            </div>
+          )}
+
+          {fullList.products.length > 0 ? (
+            <>
+              {!fullList.parent_list_id && (
+                <h2 className="text-lg font-semibold text-gray-900 mb-4">
+                  {childListsWithProducts.length > 0 ? 'Items in this list' : 'Items'}
+                </h2>
+              )}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                {fullList.products.map((product) => (
+                  <ProductCard
+                    key={product.id}
+                    product={product}
+                    onClick={() => setSelectedProduct(product)}
+                    onDelete={() => handleDeleteProduct(product.id)}
+                    onPriceUpdate={updateProductInState}
+                    onMarkOwned={updateProductInState}
+                    compareMode={compareMode}
+                    isSelectedForCompare={selectedForCompare.includes(product.id)}
+                    onToggleCompare={() => toggleCompare(product.id)}
+                    hideOwned={fullList.scope === 'stash'}
+                  />
+                ))}
+              </div>
+            </>
+          ) : fullList.parent_list_id || childListsWithProducts.length === 0 ? (
+            <div className="text-center py-16 border border-dashed border-gray-200 rounded-2xl">
+              <ShoppingBag className="w-14 h-14 text-gray-300 mx-auto mb-3" />
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                {fullList.parent_list_id ? 'No products in this sub-list' : 'No products in this list'}
+              </h3>
+              <p className="text-gray-600 mb-6 text-sm max-w-md mx-auto">
                 {fullList.scope === 'stash'
-                  ? 'Open a product from your stash on the Owned tab and add it to this list, or add from Wishlists then mark owned.'
-                  : 'Add products and assign them to this list'}
+                  ? 'Open a product from your stash on the Owned tab and add it to this list.'
+                  : fullList.parent_list_id
+                    ? 'Add products and assign them to this sub-list.'
+                    : 'Add products here or create sub-lists above to organize by category.'}
               </p>
               <button
                 onClick={() => setShowAddProduct(true)}
@@ -627,24 +861,7 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
                 <span>Add Product</span>
               </button>
             </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-              {fullList.products.map((product) => (
-                <ProductCard
-                  key={product.id}
-                  product={product}
-                  onClick={() => setSelectedProduct(product)}
-                  onDelete={() => handleDeleteProduct(product.id)}
-                  onPriceUpdate={updateProductInState}
-                  onMarkOwned={updateProductInState}
-                  compareMode={compareMode}
-                  isSelectedForCompare={selectedForCompare.includes(product.id)}
-                  onToggleCompare={() => toggleCompare(product.id)}
-                  hideOwned={fullList.scope === 'stash'}
-                />
-              ))}
-            </div>
-          )}
+          ) : null}
         </main>
 
         {showCompareModal && compareProducts.length >= 2 && (
@@ -659,6 +876,8 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
             lists={wishlistListsOnly}
             onClose={() => setShowAddProduct(false)}
             onSuccess={handleProductAdded}
+            initialListId={addProductInitialListId}
+            playwrightStatus={playwrightStatus}
           />
         )}
 
@@ -708,11 +927,11 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
                 'Save and organize recipes, videos, articles, and links from anywhere'
               ) : (
                 <>
-                  {wishlistListsWithProducts.length} wishlist{wishlistListsWithProducts.length !== 1 ? 's' : ''}
-                  {stashListsWithProducts.length > 0 && (
+                  {topLevelWishlistCount} wishlist{topLevelWishlistCount !== 1 ? 's' : ''}
+                  {topLevelStashListCount > 0 && (
                     <span className="text-gray-400">
                       {' '}
-                      · {stashListsWithProducts.length} stash list{stashListsWithProducts.length !== 1 ? 's' : ''}
+                      · {topLevelStashListCount} stash list{topLevelStashListCount !== 1 ? 's' : ''}
                     </span>
                   )}
                 </>
@@ -785,18 +1004,50 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
               <strong>{pendingDetailedProducts.length}</strong> quick-add link
               {pendingDetailedProducts.length !== 1 ? 's' : ''} waiting for detailed add. Use{' '}
               <strong>Profile</strong> to schedule automatic runs, or finish them now.
+              {!browserLive && (
+                <span className="block mt-1 text-amber-800">
+                  Detailed add is not ready yet — wait for &quot;App ready&quot; in the header before running the batch.
+                </span>
+              )}
             </span>
             <button
               type="button"
               disabled={detailedEnrichment.running}
-              onClick={() => void detailedEnrichment.runBatch()}
+              onClick={() => {
+                if (playwrightStatus === 'idle') {
+                  setDetailedEnrichBlockedMsg(
+                    'Detailed add is not ready yet — the service is still waking up. Wait for "App ready" in the header, then try again.'
+                  );
+                  void warmupScrapeService();
+                  return;
+                }
+                setDetailedEnrichBlockedMsg(null);
+                void detailedEnrichment.runBatch();
+              }}
               className="px-3 py-1.5 bg-amber-900 text-white rounded-lg text-sm font-medium hover:bg-amber-800 disabled:opacity-50 shrink-0"
             >
               {detailedEnrichment.running
                 ? detailedEnrichment.progress
                   ? `Working… ${detailedEnrichment.progress.current}/${detailedEnrichment.progress.total}`
                   : 'Working…'
-                : 'Run detailed add now'}
+                : browserLive
+                  ? 'Run detailed add now'
+                  : playwrightStatus === 'launching'
+                    ? 'Run detailed add (warming up…)'
+                    : 'Run detailed add (not ready)'}
+            </button>
+          </div>
+        )}
+
+        {detailedEnrichBlockedMsg && (
+          <div className="mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-800 flex items-center justify-between gap-3">
+            <span>{detailedEnrichBlockedMsg}</span>
+            <button
+              type="button"
+              onClick={() => setDetailedEnrichBlockedMsg(null)}
+              className="text-red-400 hover:text-red-600 text-xs shrink-0"
+            >
+              Dismiss
             </button>
           </div>
         )}
@@ -997,44 +1248,92 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
               <div className="text-center py-12">
                 <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900" />
               </div>
-            ) : wishlistListsWithProducts.length === 0 && !creatingList ? (
-              <div className="text-center py-20">
-                <ShoppingBag className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                <h3 className="text-xl font-semibold text-gray-900 mb-2">Your stash is empty</h3>
-                <p className="text-gray-500 mb-1 text-sm max-w-sm mx-auto">
-                  Paste any product URL — from any shop — to save it here and track the price.
-                </p>
-                <p className="text-gray-400 mb-6 text-sm">Then organise into lists like "Wishlist", "Birthday ideas", or "Next season".</p>
-                <div className="flex flex-wrap items-center justify-center gap-3">
-                  <button
-                    onClick={() => setShowAddProduct(true)}
-                    className="px-6 py-3 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors inline-flex items-center space-x-2"
-                  >
-                    <Plus className="w-5 h-5" />
-                    <span>Save Your First Product</span>
-                  </button>
-                  <button
-                    onClick={() => setCreatingList(true)}
-                    className="px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors inline-flex items-center space-x-2"
-                  >
-                    <Plus className="w-5 h-5" />
-                    <span>Create a List</span>
-                  </button>
-                </div>
-              </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                {wishlistListsWithProducts.map((list) => (
-                  <ListCard
-                    key={list.id}
-                    list={list}
-                    onClick={() => setView({ type: 'list-detail', listId: list.id })}
-                    onDelete={() => handleDeleteList(list.id)}
-                    onShare={() => handleShareList(list)}
-                    onRename={(newName) => handleRenameList(list.id, newName)}
-                  />
-                ))}
-              </div>
+              <>
+                {unlistedProducts.length > 0 && (
+                  <div className="mb-10">
+                    <div className="mb-4">
+                      <h2 className="text-lg font-semibold text-gray-900">
+                        Unlisted products ({unlistedProducts.length})
+                      </h2>
+                      <p className="text-sm text-gray-500 mt-1 max-w-2xl">
+                        These items are still saved in your account but are not in any list yet — for
+                        example after resetting wishlists. Open a product and tick the lists you want
+                        it on.
+                      </p>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                      {unlistedProducts.map((product) => (
+                        <ProductCard
+                          key={product.id}
+                          product={product}
+                          onClick={() => setSelectedProduct(product)}
+                          onDelete={() => handleDeleteProduct(product.id)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {wishlistListsWithProducts.length === 0 && !creatingList ? (
+                  unlistedProducts.length === 0 ? (
+                    <div className="text-center py-20">
+                      <ShoppingBag className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+                      <h3 className="text-xl font-semibold text-gray-900 mb-2">Your stash is empty</h3>
+                      <p className="text-gray-500 mb-1 text-sm max-w-sm mx-auto">
+                        Paste any product URL — from any shop — to save it here and track the price.
+                      </p>
+                      <p className="text-gray-400 mb-6 text-sm">
+                        Then organise into lists like "Wishlist", "Birthday ideas", or "Next season".
+                      </p>
+                      <div className="flex flex-wrap items-center justify-center gap-3">
+                        <button
+                          onClick={() => setShowAddProduct(true)}
+                          className="px-6 py-3 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors inline-flex items-center space-x-2"
+                        >
+                          <Plus className="w-5 h-5" />
+                          <span>Save Your First Product</span>
+                        </button>
+                        <button
+                          onClick={() => setCreatingList(true)}
+                          className="px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors inline-flex items-center space-x-2"
+                        >
+                          <Plus className="w-5 h-5" />
+                          <span>Create a List</span>
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-center py-8 border border-dashed border-gray-200 rounded-xl">
+                      <p className="text-gray-600 mb-4 text-sm">
+                        Create a list, then open products above and assign them to it.
+                      </p>
+                      <button
+                        onClick={() => setCreatingList(true)}
+                        className="px-6 py-3 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors inline-flex items-center space-x-2"
+                      >
+                        <Plus className="w-5 h-5" />
+                        <span>Create a List</span>
+                      </button>
+                    </div>
+                  )
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                    {wishlistListsWithProducts.map((list) => (
+                      <ListCard
+                        key={list.id}
+                        list={list}
+                        subListCount={countDirectSubLists(allLists, list.id)}
+                        statsProducts={aggregateProductsForList(list.id, listsWithProducts, allLists)}
+                        onClick={() => setView({ type: 'list-detail', listId: list.id })}
+                        onDelete={() => handleDeleteList(list.id)}
+                        onShare={() => handleShareList(list)}
+                        onRename={(newName) => handleRenameList(list.id, newName)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </>
             )}
           </>
         )}
@@ -1136,6 +1435,8 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
                           <ListCard
                             key={list.id}
                             list={list}
+                            subListCount={countDirectSubLists(allLists, list.id)}
+                            statsProducts={aggregateProductsForList(list.id, listsWithProducts, allLists)}
                             onClick={() => setView({ type: 'list-detail', listId: list.id })}
                             onDelete={() => handleDeleteList(list.id)}
                             onShare={() => handleShareList(list)}
@@ -1223,6 +1524,8 @@ export default function Dashboard({ prefillUrl, onNavigateToProfile }: Dashboard
           onClose={() => setShowAddProduct(false)}
           onSuccess={handleProductAdded}
           prefillUrl={prefillUrl}
+          initialListId={addProductInitialListId}
+          playwrightStatus={playwrightStatus}
         />
       )}
 

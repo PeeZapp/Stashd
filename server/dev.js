@@ -1,15 +1,17 @@
 import { spawn } from 'child_process';
+import { fileURLToPath } from 'url';
+import path from 'path';
 
-const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const children = [
-  spawn(npmCmd, ['run', 'proxy'], {
+  spawn(process.execPath, ['server/proxy.js'], {
     stdio: 'inherit',
-    shell: false,
+    cwd: root,
   }),
-  spawn(npmCmd, ['run', 'dev:vite'], {
+  spawn(process.execPath, ['node_modules/vite/bin/vite.js'], {
     stdio: 'inherit',
-    shell: false,
+    cwd: root,
   }),
 ];
 

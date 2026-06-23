@@ -8,6 +8,10 @@ export interface ListWithProducts extends List {
 
 interface ListCardProps {
   list: ListWithProducts;
+  /** When set, stats and cover use products across this list and all sub-lists. */
+  statsProducts?: Product[];
+  /** Direct child sub-lists count (shown on top-level cards). */
+  subListCount?: number;
   /** When `owned`, stats and cover use only items marked owned (your stash view). */
   displayMode?: 'all' | 'owned';
   onClick: () => void;
@@ -18,14 +22,17 @@ interface ListCardProps {
 
 export default function ListCard({
   list,
+  statsProducts,
+  subListCount = 0,
   displayMode = 'all',
   onClick,
   onDelete,
   onShare,
   onRename,
 }: ListCardProps) {
+  const sourceProducts = statsProducts ?? list.products;
   const products =
-    displayMode === 'owned' ? list.products.filter((p) => p.is_owned) : list.products;
+    displayMode === 'owned' ? sourceProducts.filter((p) => p.is_owned) : sourceProducts;
   const [editingName, setEditingName] = useState(false);
   const [nameInput, setNameInput] = useState(list.name);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -148,6 +155,14 @@ export default function ListCard({
 
         {/* Stats row */}
         <div className="flex items-center flex-wrap gap-x-2 gap-y-0.5 text-sm text-gray-500 mb-4">
+          {subListCount > 0 && (
+            <>
+              <span>
+                {subListCount} sub-list{subListCount !== 1 ? 's' : ''}
+              </span>
+              <span>·</span>
+            </>
+          )}
           <span>{itemCount} {itemCount === 1 ? 'item' : 'items'}</span>
           {itemCount > 0 && totalPrice > 0 && (
             <>

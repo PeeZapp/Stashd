@@ -36,30 +36,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
 
-    // Hard safety net — no matter what, unblock the app within 10 s
     const safetyTimer = setTimeout(() => {
       if (!cancelled) setLoading(false);
     }, 10000);
 
-    const init = async () => {
-      try {
-        const currentUser = await Promise.race([
-          Promise.resolve(auth.currentUser),
-          new Promise<null>((resolve) => setTimeout(() => resolve(null), 8000)),
-        ]);
-        if (cancelled) return;
-        setUser(currentUser ?? null);
-        if (currentUser) {
-          await loadProfile(currentUser.uid, currentUser);
-        } else {
-          setLoading(false);
-        }
-      } catch {
-        if (!cancelled) setLoading(false);
+    void auth.authStateReady().then(() => {
+      if (cancelled) return;
+      const currentUser = auth.currentUser;
+      setUser(currentUser);
+      if (currentUser) {
+        void loadProfile(currentUser.uid, currentUser);
+      } else {
+        setLoading(false);
       }
-    };
-
-    init();
+    });
 
     const unsubscribe = onAuthStateChanged(auth, (nextUser) => {
       if (cancelled) return;

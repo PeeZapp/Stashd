@@ -45,6 +45,8 @@ export interface List {
   name: string;
   /** wishlist = shopping lists; stash = organizing things you already own (Owned tab). */
   scope: ListScope;
+  /** When set, this list is a sub-list inside the parent wishlist/stash list. */
+  parent_list_id: string | null;
   is_shared: boolean;
   share_token: string | null;
   created_at: string;

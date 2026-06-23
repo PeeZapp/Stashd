@@ -1,7 +1,9 @@
-import { useState, useEffect } from 'react';
-import { X, Plus, AlertCircle, Loader, ExternalLink, ChevronLeft, DollarSign, Info } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { X, Plus, AlertCircle, Loader, ExternalLink, ChevronLeft, ChevronDown, ChevronRight, DollarSign, Info } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { scrapeProduct } from '../lib/scrapeProduct';
+import { warmupScrapeService } from '../lib/warmupScrapeService';
+import type { PlaywrightState } from '../hooks/usePlaywrightStatus';
 import {
   addProductToLists,
   createList,
@@ -9,14 +11,20 @@ import {
   getUserLists,
 } from '../lib/firestore';
 import type { List } from '../lib/types';
+import { getChildLists, isTopLevelList } from '../lib/listHierarchy';
 import { normalizeProtocolRelativeUrl } from '../lib/normalizeMediaUrl';
 import { titleFromProductUrl } from '../lib/titleFromProductUrl';
+import { formatFirestoreError } from '../lib/firestoreAuth';
+import { useBodyScrollLock } from '../hooks/useBodyScrollLock';
 
 interface AddProductModalProps {
   lists: List[];
   onClose: () => void;
   onSuccess: () => void;
   prefillUrl?: string;
+  /** When opening from a list view, pre-select that list. */
+  initialListId?: string;
+  playwrightStatus?: PlaywrightState;
 }
 
 type Step = 'url' | 'fetching' | 'details';
@@ -45,54 +53,151 @@ const emptyForm = (sourceUrl = ''): FormData => ({
   priceSource: null,
 });
 
+function getPrimeGroupIds(lists: List[], primeId: string): Set<string> {
+  const childIds = getChildLists(lists, primeId).map((list) => list.id);
+  return new Set([primeId, ...childIds]);
+}
+
+function getInitialExpandedPrimeId(lists: List[], initialListId?: string): string | null {
+  if (!initialListId) return null;
+  const list = lists.find((entry) => entry.id === initialListId);
+  if (!list) return null;
+  return list.parent_list_id ?? list.id;
+}
+
 function AddToListsFields({
   lists,
   selectedListIds,
-  onToggleList,
+  onSelectInPrimeGroup,
+  initialExpandedPrimeId,
   pendingNewLists,
   onRemovePendingName,
   newListName,
   onNewListNameChange,
   onCommitNewListName,
   footerHint,
+  fillHeight = false,
 }: {
   lists: List[];
   selectedListIds: string[];
-  onToggleList: (listId: string) => void;
+  onSelectInPrimeGroup: (primeId: string, listId: string) => void;
+  initialExpandedPrimeId?: string | null;
   pendingNewLists: string[];
   onRemovePendingName: (name: string) => void;
   newListName: string;
   onNewListNameChange: (value: string) => void;
   onCommitNewListName: () => void;
   footerHint: string;
+  fillHeight?: boolean;
 }) {
-  return (
-    <div className="border-t border-gray-100 pt-4">
-      <label className="block text-sm font-medium text-gray-700 mb-3">
-        Add to Lists
-        <span className="ml-1 text-xs text-gray-400">(wishlists)</span>
-      </label>
-      <p className="text-xs text-gray-500 mb-3">
-        Wishlists only here. Stash lists hold items you own — open something on the <strong>Owned</strong> tab and add
-        it there.
-      </p>
+  const primeLists = useMemo(
+    () => lists.filter((list) => isTopLevelList(list)),
+    [lists]
+  );
+  const [expandedPrimeId, setExpandedPrimeId] = useState<string | null>(
+    () => initialExpandedPrimeId ?? null
+  );
 
-      {lists.length > 0 && (
-        <div className="space-y-2 mb-3 max-h-40 overflow-y-auto">
-          {lists.map((list) => (
-            <label
-              key={list.id}
-              className="flex items-center space-x-2 p-2 hover:bg-gray-50 rounded cursor-pointer"
-            >
-              <input
-                type="checkbox"
-                checked={selectedListIds.includes(list.id)}
-                onChange={() => onToggleList(list.id)}
-                className="w-4 h-4 text-gray-900 focus:ring-gray-900 rounded"
-              />
-              <span className="text-sm text-gray-700">{list.name}</span>
-            </label>
-          ))}
+  const isSelectedInGroup = (primeId: string) => {
+    const groupIds = getPrimeGroupIds(lists, primeId);
+    return selectedListIds.some((id) => groupIds.has(id));
+  };
+
+  const selectedInGroup = (primeId: string) =>
+    selectedListIds.find((id) => getPrimeGroupIds(lists, primeId).has(id));
+
+  return (
+    <div
+      className={`border-t border-gray-100 ${
+        fillHeight ? 'flex flex-col flex-1 min-h-0 pt-3' : 'pt-4'
+      }`}
+    >
+      <label className="block text-sm font-medium text-gray-700 mb-2 flex-shrink-0">Add to Lists</label>
+
+      {primeLists.length > 0 && (
+        <div
+          className={`space-y-2 mb-2 overflow-y-auto overscroll-contain ${
+            fillHeight ? 'flex-1 min-h-36' : 'max-h-52'
+          }`}
+        >
+          {primeLists.map((prime) => {
+            const subLists = getChildLists(lists, prime.id);
+            const hasSubLists = subLists.length > 0;
+            const expanded = expandedPrimeId === prime.id;
+            const groupSelection = selectedInGroup(prime.id);
+
+            return (
+              <div key={prime.id} className="rounded-lg border border-gray-200 overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (hasSubLists) {
+                      setExpandedPrimeId(expanded ? null : prime.id);
+                    } else {
+                      onSelectInPrimeGroup(prime.id, prime.id);
+                    }
+                  }}
+                  className={`w-full flex items-center gap-2 px-3 py-2.5 text-left transition-colors ${
+                    isSelectedInGroup(prime.id) ? 'bg-gray-50' : 'hover:bg-gray-50'
+                  }`}
+                >
+                  {hasSubLists ? (
+                    expanded ? (
+                      <ChevronDown className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                    ) : (
+                      <ChevronRight className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                    )
+                  ) : (
+                    <span
+                      className={`w-4 h-4 rounded-full border flex-shrink-0 ${
+                        groupSelection === prime.id
+                          ? 'border-gray-900 bg-gray-900'
+                          : 'border-gray-300'
+                      }`}
+                    />
+                  )}
+                  <span className="text-sm font-medium text-gray-800 flex-1">{prime.name}</span>
+                  {hasSubLists && groupSelection && (
+                    <span className="text-xs text-gray-500 truncate max-w-[40%]">
+                      {groupSelection === prime.id
+                        ? 'This list'
+                        : subLists.find((sub) => sub.id === groupSelection)?.name}
+                    </span>
+                  )}
+                </button>
+
+                {hasSubLists && expanded && (
+                  <div className="border-t border-gray-100 bg-gray-50/80 px-3 py-2 space-y-1">
+                    <label className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-white cursor-pointer">
+                      <input
+                        type="radio"
+                        name={`prime-${prime.id}`}
+                        checked={groupSelection === prime.id}
+                        onChange={() => onSelectInPrimeGroup(prime.id, prime.id)}
+                        className="w-4 h-4 text-gray-900 focus:ring-gray-900"
+                      />
+                      <span className="text-sm text-gray-700">This list</span>
+                    </label>
+                    {subLists.map((sub) => (
+                      <label
+                        key={sub.id}
+                        className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-white cursor-pointer"
+                      >
+                        <input
+                          type="radio"
+                          name={`prime-${prime.id}`}
+                          checked={groupSelection === sub.id}
+                          onChange={() => onSelectInPrimeGroup(prime.id, sub.id)}
+                          className="w-4 h-4 text-gray-900 focus:ring-gray-900"
+                        />
+                        <span className="text-sm text-gray-700">{sub.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -115,7 +220,7 @@ function AddToListsFields({
           ))}
         </div>
       )}
-      <div className="flex space-x-2">
+      <div className="flex space-x-2 flex-shrink-0">
         <input
           type="text"
           value={newListName}
@@ -138,22 +243,33 @@ function AddToListsFields({
           <Plus className="w-5 h-5" />
         </button>
       </div>
-      <p className="text-xs text-gray-400 mt-1">{footerHint}</p>
+      {!fillHeight && <p className="text-xs text-gray-400 mt-1">{footerHint}</p>}
     </div>
   );
 }
 
-export default function AddProductModal({ lists, onClose, onSuccess, prefillUrl }: AddProductModalProps) {
+export default function AddProductModal({
+  lists,
+  onClose,
+  onSuccess,
+  prefillUrl,
+  initialListId,
+  playwrightStatus = 'idle',
+}: AddProductModalProps) {
   const { user } = useAuth();
+  useBodyScrollLock();
   const [step, setStep] = useState<Step>('url');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [formData, setFormData] = useState<FormData>(emptyForm(prefillUrl ?? ''));
-  const [selectedListIds, setSelectedListIds] = useState<string[]>([]);
+  const [selectedListIds, setSelectedListIds] = useState<string[]>(() =>
+    initialListId ? [initialListId] : []
+  );
   const [newListName, setNewListName] = useState('');
   const [botProtected, setBotProtected] = useState(false);
   const [fetchSeconds, setFetchSeconds] = useState(0);
   const [pendingNewLists, setPendingNewLists] = useState<string[]>([]);
+  const [descriptionExpanded, setDescriptionExpanded] = useState(false);
 
   useEffect(() => {
     if (step !== 'fetching') { setFetchSeconds(0); return; }
@@ -163,6 +279,9 @@ export default function AddProductModal({ lists, onClose, onSuccess, prefillUrl 
 
   const update = (field: keyof FormData, value: string | boolean | null) =>
     setFormData((prev) => ({ ...prev, [field]: value }));
+
+  const detailedAddReady = playwrightStatus === 'ready';
+  const detailedAddWarming = playwrightStatus === 'launching';
 
   const handleFetchUrl = async () => {
     const url = formData.sourceUrl.trim();
@@ -174,6 +293,14 @@ export default function AddProductModal({ lists, onClose, onSuccess, prefillUrl 
       new URL(url);
     } catch {
       setError('Please enter a valid URL (e.g. https://example.com/product)');
+      return;
+    }
+
+    if (playwrightStatus === 'idle') {
+      setError(
+        'Detailed add is not ready yet — the service is still waking up. Wait for "App ready" in the header (usually 30–60 seconds after login), or use Quick add / manual entry instead.'
+      );
+      void warmupScrapeService();
       return;
     }
 
@@ -205,9 +332,10 @@ export default function AddProductModal({ lists, onClose, onSuccess, prefillUrl 
   };
 
   useEffect(() => {
-    if (prefillUrl) void handleFetchUrl();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only auto-run bookmarklet once
-  }, []);
+    if (!prefillUrl || !detailedAddReady) return;
+    void handleFetchUrl();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- auto-run bookmarklet once when service is ready
+  }, [prefillUrl, detailedAddReady]);
 
   const handleSkipToManual = () => {
     setError('');
@@ -284,12 +412,7 @@ export default function AddProductModal({ lists, onClose, onSuccess, prefillUrl 
       onSuccess();
     } catch (err: unknown) {
       console.error('Quick add error:', err);
-      const errObj = err as Record<string, unknown>;
-      const msg =
-        typeof errObj?.message === 'string'
-          ? errObj.message
-          : 'Failed to save link. Please try again.';
-      setError(msg);
+      setError(formatFirestoreError(err, 'Quick add'));
     } finally {
       setLoading(false);
     }
@@ -315,7 +438,9 @@ export default function AddProductModal({ lists, onClose, onSuccess, prefillUrl 
       const isOnSale =
         currentPrice !== null && originalPrice !== null && originalPrice > currentPrice;
 
-      const product = await createProduct({
+    let product;
+    try {
+      product = await createProduct({
         user_id: user.uid,
         title: formData.title.trim(),
         source_url: formData.sourceUrl.trim(),
@@ -331,13 +456,17 @@ export default function AddProductModal({ lists, onClose, onSuccess, prefillUrl 
         add_detail_level: 'detailed',
         detailed_enrichment_pending: false,
       });
+    } catch (err) {
+      setError(formatFirestoreError(err, 'Saving product'));
+      return;
+    }
 
-      let allListIds = [...selectedListIds];
-
-      const listsToCreate = [
-        ...pendingNewLists,
-        ...(newListName.trim() ? [newListName.trim()] : []),
-      ];
+    let allListIds = [...selectedListIds];
+    const listsToCreate = [
+      ...pendingNewLists,
+      ...(newListName.trim() ? [newListName.trim()] : []),
+    ];
+    try {
       for (const name of listsToCreate) {
         const newList = await createList({
           user_id: user.uid,
@@ -348,11 +477,11 @@ export default function AddProductModal({ lists, onClose, onSuccess, prefillUrl 
         allListIds = [...allListIds, newList.id];
       }
 
-      // If still no list selected, use or create an "Uncategorised" list
-      if (allListIds.length === 0 && product) {
+      if (allListIds.length === 0) {
         const existingLists = await getUserLists(user.uid);
-        const existing = existingLists.find((list) => list.name === 'Uncategorised');
-
+        const existing = existingLists.find(
+          (list) => list.name === 'Uncategorised' && list.scope === 'wishlist'
+        );
         if (existing) {
           allListIds = [existing.id];
         } else {
@@ -366,22 +495,20 @@ export default function AddProductModal({ lists, onClose, onSuccess, prefillUrl 
         }
       }
 
-      if (allListIds.length > 0 && product) {
-        await addProductToLists({
-          user_id: user.uid,
-          list_ids: allListIds,
-          product_id: product.id,
-        });
-      }
+      await addProductToLists({
+        user_id: user.uid,
+        list_ids: allListIds,
+        product_id: product.id,
+      });
+    } catch (err) {
+      setError(formatFirestoreError(err, 'Adding to list'));
+      return;
+    }
 
-      onSuccess();
+    onSuccess();
     } catch (err: unknown) {
       console.error('Error saving product:', err);
-      const errObj = err as Record<string, unknown>;
-      const msg = typeof errObj?.message === 'string'
-        ? errObj.message
-        : 'Failed to save product. Please try again.';
-      setError(msg);
+      setError(formatFirestoreError(err));
       // Scroll to top of modal so error is visible
       document.querySelector('.modal-scroll-top')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } finally {
@@ -389,10 +516,20 @@ export default function AddProductModal({ lists, onClose, onSuccess, prefillUrl 
     }
   };
 
-  const toggleList = (listId: string) =>
-    setSelectedListIds((prev) =>
-      prev.includes(listId) ? prev.filter((id) => id !== listId) : [...prev, listId]
-    );
+  const selectInPrimeGroup = (primeId: string, listId: string) => {
+    const groupIds = getPrimeGroupIds(lists, primeId);
+    setSelectedListIds((prev) => {
+      if (prev.includes(listId)) {
+        return prev.filter((id) => !groupIds.has(id));
+      }
+      return [...prev.filter((id) => !groupIds.has(id)), listId];
+    });
+  };
+
+  const initialExpandedPrimeId = useMemo(
+    () => getInitialExpandedPrimeId(lists, initialListId),
+    [lists, initialListId]
+  );
 
   const commitPendingNewListName = () => {
     const name = newListName.trim();
@@ -403,8 +540,12 @@ export default function AddProductModal({ lists, onClose, onSuccess, prefillUrl 
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-hidden">
-      <div className="bg-white rounded-2xl max-w-2xl w-full p-8 relative max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-y-contain">
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-hidden overscroll-none touch-none">
+      <div
+        className={`bg-white rounded-2xl max-w-2xl w-full relative max-h-[calc(100dvh-2rem)] flex flex-col touch-auto ${
+          step === 'details' ? 'p-5 overflow-hidden' : 'p-8 overflow-y-auto overscroll-y-contain'
+        }`}
+      >
         <button
           onClick={onClose}
           className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 transition-colors"
@@ -415,11 +556,23 @@ export default function AddProductModal({ lists, onClose, onSuccess, prefillUrl 
         {/* ── Step: URL entry ── */}
         {step === 'url' && (
           <>
-            <h2 className="text-2xl font-bold text-gray-900 mb-2">Add New Product</h2>
-            <p className="text-sm text-gray-500 mb-6">
-              Paste a link. Use <strong>Quick add</strong> to save the URL only, or{' '}
-              <strong>Detailed add</strong> to fetch title, price, and image from the page (slower).
-            </p>
+            <h2 className="text-2xl font-bold text-gray-900 mb-6">Add New Product</h2>
+
+            {!detailedAddReady && (
+              <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-start space-x-2">
+                <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-medium text-amber-800">
+                    {detailedAddWarming ? 'Detailed add is warming up' : 'Detailed add is not ready yet'}
+                  </p>
+                  <p className="text-xs text-amber-700 mt-0.5">
+                    {detailedAddWarming
+                      ? 'The server browser is launching — detailed add should work in a moment. Quick add and manual entry work anytime.'
+                      : 'The detailed add service is still starting (see the status pill in the header). This usually takes 30–60 seconds after login. Quick add and manual entry work anytime.'}
+                  </p>
+                </div>
+              </div>
+            )}
 
             {error && (
               <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-start space-x-2">
@@ -452,7 +605,8 @@ export default function AddProductModal({ lists, onClose, onSuccess, prefillUrl 
               <AddToListsFields
                 lists={lists}
                 selectedListIds={selectedListIds}
-                onToggleList={toggleList}
+                onSelectInPrimeGroup={selectInPrimeGroup}
+                initialExpandedPrimeId={initialExpandedPrimeId}
                 pendingNewLists={pendingNewLists}
                 onRemovePendingName={(name) =>
                   setPendingNewLists((prev) => prev.filter((n) => n !== name))
@@ -460,7 +614,7 @@ export default function AddProductModal({ lists, onClose, onSuccess, prefillUrl 
                 newListName={newListName}
                 onNewListNameChange={(v) => setNewListName(v)}
                 onCommitNewListName={commitPendingNewListName}
-                footerHint="Quick add needs at least one list checked or a new list queued (+). Detailed save without lists uses Uncategorised."
+                footerHint="Quick add needs at least one list selected or a new list queued (+). Detailed save without lists uses Uncategorised."
               />
 
               <button
@@ -477,10 +631,27 @@ export default function AddProductModal({ lists, onClose, onSuccess, prefillUrl 
                 type="button"
                 onClick={() => void handleFetchUrl()}
                 disabled={!formData.sourceUrl.trim() || loading}
-                className="w-full px-4 py-3 bg-gray-900 text-white rounded-lg hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium flex items-center justify-center space-x-2"
+                title={
+                  !detailedAddReady && !detailedAddWarming
+                    ? 'Wait for App ready in the header before using detailed add'
+                    : undefined
+                }
+                className={`w-full px-4 py-3 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium flex items-center justify-center space-x-2 ${
+                  detailedAddReady
+                    ? 'bg-gray-900 text-white hover:bg-gray-800'
+                    : detailedAddWarming
+                      ? 'bg-amber-700 text-white hover:bg-amber-800'
+                      : 'bg-amber-100 text-amber-900 border border-amber-300 hover:bg-amber-200'
+                }`}
               >
                 <ExternalLink className="w-4 h-4" />
-                <span>Detailed add</span>
+                <span>
+                  {detailedAddReady
+                    ? 'Detailed add'
+                    : detailedAddWarming
+                      ? 'Detailed add (warming up…)'
+                      : 'Detailed add (not ready)'}
+                </span>
               </button>
 
               <button
@@ -503,7 +674,9 @@ export default function AddProductModal({ lists, onClose, onSuccess, prefillUrl 
               {fetchSeconds < 8 ? 'Running detailed add…' : fetchSeconds < 20 ? 'Still working…' : 'Almost there…'}
             </p>
             <p className="text-sm text-gray-400 text-center max-w-xs">
-              {fetchSeconds < 8
+              {detailedAddWarming && fetchSeconds < 20
+                ? 'The server browser is still warming up — bot-protected sites may take up to a minute on first use.'
+                : fetchSeconds < 8
                 ? 'Reading the product page for title, price, and image.'
                 : fetchSeconds < 20
                 ? 'This site may need a moment to load — hang tight.'
@@ -514,8 +687,8 @@ export default function AddProductModal({ lists, onClose, onSuccess, prefillUrl 
 
         {/* ── Step: Details / edit ── */}
         {step === 'details' && (
-          <>
-            <div className="flex items-center space-x-2 mb-6">
+          <div className="flex flex-col flex-1 min-h-0">
+            <div className="flex items-center space-x-2 mb-3 flex-shrink-0">
               <button
                 type="button"
                 onClick={() => { setStep('url'); setError(''); }}
@@ -523,240 +696,240 @@ export default function AddProductModal({ lists, onClose, onSuccess, prefillUrl 
               >
                 <ChevronLeft className="w-5 h-5" />
               </button>
-              <h2 className="text-2xl font-bold text-gray-900">Product Details</h2>
+              <h2 className="text-xl font-bold text-gray-900">Product Details</h2>
             </div>
 
             {error && (
-              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-start space-x-2">
-                <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
-                <p className="text-sm text-red-800">{error}</p>
+              <div className="mb-2 p-2 bg-red-50 border border-red-200 rounded-lg flex items-start space-x-2 flex-shrink-0">
+                <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
+                <p className="text-xs text-red-800">{error}</p>
               </div>
             )}
 
-            <form onSubmit={handleSubmit} className="space-y-4">
-              {/* URL */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Product URL <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="url"
-                  value={formData.sourceUrl}
-                  onChange={(e) => update('sourceUrl', e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent text-sm text-gray-600"
-                  placeholder="https://example.com/product"
-                  required
-                />
-              </div>
+            <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0 gap-2">
+              <div className="flex-shrink-0 space-y-2">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Product URL <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="url"
+                    value={formData.sourceUrl}
+                    onChange={(e) => update('sourceUrl', e.target.value)}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent text-sm text-gray-600"
+                    placeholder="https://example.com/product"
+                    required
+                  />
+                </div>
 
-              {/* Title */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Product Name <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={formData.title}
-                  onChange={(e) => update('title', e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent"
-                  placeholder="Product name"
-                  required
-                />
-              </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Product Name <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.title}
+                    onChange={(e) => update('title', e.target.value)}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent"
+                    placeholder="Product name"
+                    required
+                  />
+                </div>
 
-              {/* Bot protection banner */}
-              {botProtected && (
-                <div className="flex items-start space-x-3 p-3 bg-red-50 border border-red-200 rounded-lg">
-                  <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
-                  <div>
-                    <p className="text-sm font-medium text-red-800">This site blocks automated access</p>
-                    <p className="text-xs text-red-700 mt-0.5">
-                      {formData.storeName || 'This retailer'} uses bot protection that prevents reading product details automatically. Please visit the site, copy the product name and price, and enter them below.
-                    </p>
+                {botProtected && (
+                  <p className="text-xs text-red-800 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5 flex items-center gap-1.5 flex-wrap">
+                    <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                    <span>Bot protection — enter details manually.</span>
                     {formData.sourceUrl && (
                       <a
                         href={formData.sourceUrl}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-xs text-red-700 font-medium underline mt-1"
+                        className="inline-flex items-center gap-0.5 font-medium underline"
                       >
-                        Open product page <ExternalLink className="w-3 h-3" />
+                        Open page <ExternalLink className="w-3 h-3" />
                       </a>
                     )}
-                  </div>
-                </div>
-              )}
+                  </p>
+                )}
 
-              {/* Price not found callout */}
-              {!botProtected && !formData.currentPrice && formData.sourceUrl && (
-                <div className="flex items-start space-x-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
-                  <DollarSign className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
-                  <div>
-                    <p className="text-sm font-medium text-amber-800">Price not found automatically</p>
-                    <p className="text-xs text-amber-700 mt-0.5">
-                      Most major retailers protect their prices from automated reading. Check the site and enter the price below — it only takes a second.
-                    </p>
-                  </div>
-                </div>
-              )}
+                {!botProtected && !formData.currentPrice && formData.sourceUrl && (
+                  <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 flex items-center gap-1.5">
+                    <DollarSign className="w-3.5 h-3.5 flex-shrink-0" />
+                    Price not found — check the site and enter it below.
+                  </p>
+                )}
 
-              {/* eBay price disclaimer when price was sourced from eBay */}
-              {formData.currentPrice && formData.priceSource === 'ebay' && (
-                <div className="flex items-start space-x-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                  <Info className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5" />
-                  <div>
-                    <p className="text-sm font-medium text-blue-800">Price from eBay marketplace</p>
-                    <p className="text-xs text-blue-700 mt-0.5">
-                      We couldn't read the price directly from the retailer, so this is the lowest new listing price from eBay. It's a useful reference but may differ from the retailer's actual price. You can edit it below.
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {/* Prices */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Current Price
-                  </label>
-                  <div className="relative">
-                    <span className="absolute left-3 top-2.5 text-gray-500 text-sm">$</span>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={formData.currentPrice}
-                      onChange={(e) => { update('currentPrice', e.target.value); update('priceSource', 'manual'); }}
-                      className={`w-full pl-7 pr-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent ${!formData.currentPrice && formData.sourceUrl ? 'border-amber-300 bg-amber-50' : 'border-gray-300'}`}
-                      placeholder="0.00"
-                      autoFocus={!formData.currentPrice && !!formData.sourceUrl}
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Original / Was Price
-                    <span className="ml-1 text-xs text-gray-400">(if on sale)</span>
-                  </label>
-                  <div className="relative">
-                    <span className="absolute left-3 top-2.5 text-gray-500 text-sm">$</span>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={formData.originalPrice}
-                      onChange={(e) => update('originalPrice', e.target.value)}
-                      className="w-full pl-7 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent"
-                      placeholder="0.00"
-                    />
-                  </div>
-                </div>
+                {formData.currentPrice && formData.priceSource === 'ebay' && (
+                  <p className="text-xs text-blue-800 bg-blue-50 border border-blue-200 rounded-lg px-2.5 py-1.5 flex items-center gap-1.5">
+                    <Info className="w-3.5 h-3.5 flex-shrink-0" />
+                    Price from eBay — may differ from the retailer. You can edit it.
+                  </p>
+                )}
               </div>
 
-              {/* Image */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Image URL
-                  <span className="ml-1 text-xs text-gray-400">(optional)</span>
-                </label>
-                {formData.imageUrl && (
-                  <div className="mb-2 rounded-lg overflow-hidden border border-gray-200 h-32 bg-gray-50 flex items-center justify-center">
+              <div className="grid grid-cols-2 gap-3 flex-shrink-0">
+                <div className="rounded-lg overflow-hidden border border-gray-200 h-28 bg-gray-50 flex items-center justify-center">
+                  {formData.imageUrl ? (
                     <img
                       src={formData.imageUrl}
                       alt="Product preview"
                       className="max-h-full max-w-full object-contain"
                       onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
                     />
+                  ) : (
+                    <span className="text-xs text-gray-400 px-2 text-center">No image</span>
+                  )}
+                </div>
+
+                <div className="space-y-1.5 min-w-0">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-0.5">
+                        Current Price
+                      </label>
+                      <div className="relative">
+                        <span className="absolute left-2 top-1.5 text-gray-500 text-xs">$</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={formData.currentPrice}
+                          onChange={(e) => { update('currentPrice', e.target.value); update('priceSource', 'manual'); }}
+                          className={`w-full pl-5 pr-2 py-1.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent ${
+                            !formData.currentPrice && formData.sourceUrl ? 'border-amber-300 bg-amber-50' : 'border-gray-300'
+                          }`}
+                          placeholder="0.00"
+                          autoFocus={!formData.currentPrice && !!formData.sourceUrl}
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-0.5">
+                        Was Price
+                      </label>
+                      <div className="relative">
+                        <span className="absolute left-2 top-1.5 text-gray-500 text-xs">$</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={formData.originalPrice}
+                          onChange={(e) => update('originalPrice', e.target.value)}
+                          className="w-full pl-5 pr-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent"
+                          placeholder="0.00"
+                        />
+                      </div>
+                    </div>
                   </div>
-                )}
-                <input
-                  type="text"
-                  inputMode="url"
-                  autoComplete="url"
-                  value={formData.imageUrl}
-                  onChange={(e) => update('imageUrl', e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent"
-                  placeholder="https://example.com/image.jpg"
-                />
+
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-0.5">
+                      Image URL
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="url"
+                      autoComplete="url"
+                      value={formData.imageUrl}
+                      onChange={(e) => update('imageUrl', e.target.value)}
+                      className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent"
+                      placeholder="https://example.com/image.jpg"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-0.5">
+                        Store
+                      </label>
+                      <input
+                        type="text"
+                        value={formData.storeName}
+                        onChange={(e) => update('storeName', e.target.value)}
+                        className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent"
+                        placeholder="Amazon, Nike…"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-0.5">
+                        SKU / Model
+                      </label>
+                      <input
+                        type="text"
+                        value={formData.sku}
+                        onChange={(e) => update('sku', e.target.value)}
+                        className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent font-mono"
+                        placeholder="ABC-1234"
+                      />
+                    </div>
+                  </div>
+                </div>
               </div>
 
-              {/* Store + SKU row */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Store Name
-                    <span className="ml-1 text-xs text-gray-400">(optional)</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.storeName}
-                    onChange={(e) => update('storeName', e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent"
-                    placeholder="e.g., Amazon, Nike"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    SKU / Model No.
-                    <span className="ml-1 text-xs text-gray-400">(optional)</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.sku}
-                    onChange={(e) => update('sku', e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent font-mono text-sm"
-                    placeholder="e.g., ABC-1234"
-                  />
-                </div>
-              </div>
-
-              {/* Description */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+              <div className="flex-shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setDescriptionExpanded((open) => !open)}
+                  className="flex items-center gap-1 text-sm font-medium text-gray-700 hover:text-gray-900"
+                >
+                  {descriptionExpanded ? (
+                    <ChevronDown className="w-4 h-4 text-gray-400" />
+                  ) : (
+                    <ChevronRight className="w-4 h-4 text-gray-400" />
+                  )}
                   Description
-                  <span className="ml-1 text-xs text-gray-400">(optional)</span>
-                </label>
-                <textarea
-                  value={formData.description}
-                  onChange={(e) => update('description', e.target.value)}
-                  rows={3}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent resize-none"
-                  placeholder="Notes or description"
+                  {formData.description.trim() && !descriptionExpanded && (
+                    <span className="text-xs font-normal text-gray-400">(added)</span>
+                  )}
+                </button>
+                {descriptionExpanded && (
+                  <textarea
+                    value={formData.description}
+                    onChange={(e) => update('description', e.target.value)}
+                    rows={2}
+                    className="mt-1 w-full px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent resize-none"
+                    placeholder="Notes or description"
+                  />
+                )}
+              </div>
+
+              <div className="flex-1 min-h-0 flex flex-col">
+                <AddToListsFields
+                  lists={lists}
+                  selectedListIds={selectedListIds}
+                  onSelectInPrimeGroup={selectInPrimeGroup}
+                  initialExpandedPrimeId={initialExpandedPrimeId}
+                  pendingNewLists={pendingNewLists}
+                  onRemovePendingName={(name) =>
+                    setPendingNewLists((prev) => prev.filter((n) => n !== name))
+                  }
+                  newListName={newListName}
+                  onNewListNameChange={(v) => setNewListName(v)}
+                  onCommitNewListName={commitPendingNewListName}
+                  footerHint="Press + or Enter to queue a new list. Leave everything unchecked to save into Uncategorised."
+                  fillHeight
                 />
               </div>
 
-              <AddToListsFields
-                lists={lists}
-                selectedListIds={selectedListIds}
-                onToggleList={toggleList}
-                pendingNewLists={pendingNewLists}
-                onRemovePendingName={(name) =>
-                  setPendingNewLists((prev) => prev.filter((n) => n !== name))
-                }
-                newListName={newListName}
-                onNewListNameChange={(v) => setNewListName(v)}
-                onCommitNewListName={commitPendingNewListName}
-                footerHint="Press + or Enter to queue a new list. Leave everything unchecked to save into Uncategorised."
-              />
-
-              <div className="flex space-x-3 pt-4">
+              <div className="flex space-x-3 pt-1 flex-shrink-0">
                 <button
                   type="button"
                   onClick={onClose}
-                  className="flex-1 px-4 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
+                  className="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium text-sm"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={loading}
-                  className="flex-1 px-4 py-3 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+                  className="flex-1 px-4 py-2.5 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium text-sm"
                 >
                   {loading ? 'Saving…' : 'Save Product'}
                 </button>
               </div>
             </form>
-          </>
+          </div>
         )}
       </div>
     </div>

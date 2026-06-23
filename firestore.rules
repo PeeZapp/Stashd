@@ -31,17 +31,20 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/outfits/$(outfitId)).data.user_id == request.auth.uid;
     }
 
-    function isStandardListOwnerForCreate(listId) {
-      return isSignedIn()
-        && exists(/databases/$(database)/documents/standard_lists/$(listId))
-        && get(/databases/$(database)/documents/standard_lists/$(listId)).data.user_id == request.auth.uid;
+    function listCollaboratorEmails(list) {
+      return list.collaborator_emails == null ? [] : list.collaborator_emails;
+    }
+
+    function isListCollaborator(list) {
+      return request.auth.token.email != null
+        && request.auth.token.email in listCollaboratorEmails(list);
     }
 
     function canAccessStandardList(listId) {
       let list = get(/databases/$(database)/documents/standard_lists/$(listId)).data;
       return isSignedIn()
         && (list.user_id == request.auth.uid
-          || (request.auth.token.email in list.collaborator_emails)
+          || isListCollaborator(list)
           || list.is_shared == true);
     }
 
@@ -49,7 +52,7 @@ service cloud.firestore {
       let list = get(/databases/$(database)/documents/standard_lists/$(listId)).data;
       return isSignedIn()
         && (list.user_id == request.auth.uid
-          || (request.auth.token.email in list.collaborator_emails));
+          || isListCollaborator(list));
     }
 
     match /profiles/{userId} {
@@ -75,8 +78,9 @@ service cloud.firestore {
     }
 
     match /list_products/{rowId} {
-      allow read: if (isSignedIn() && resource.data.user_id == request.auth.uid)
-        || get(/databases/$(database)/documents/lists/$(resource.data.list_id)).data.is_shared == true;
+      allow read: if isSignedIn() && resource.data.user_id == request.auth.uid;
+      allow read: if exists(/databases/$(database)/documents/lists/$(resource.data.list_id))
+        && get(/databases/$(database)/documents/lists/$(resource.data.list_id)).data.is_shared == true;
 
       allow create: if isSignedIn()
         && request.resource.data.user_id == request.auth.uid
@@ -115,9 +119,12 @@ service cloud.firestore {
     match /standard_lists/{listId} {
       allow read: if (isSignedIn()
         && (resource.data.user_id == request.auth.uid
-          || (request.auth.token.email in resource.data.collaborator_emails)))
+          || isListCollaborator(resource.data)))
         || resource.data.is_shared == true;
-      allow update, delete: if isSignedIn()
+      allow update: if isSignedIn()
+        && (resource.data.user_id == request.auth.uid
+          || canEditStandardList(listId));
+      allow delete: if isSignedIn()
         && resource.data.user_id == request.auth.uid;
       allow create: if isSignedIn()
         && request.resource.data.user_id == request.auth.uid;

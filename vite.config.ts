@@ -6,6 +6,9 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
+      devOptions: {
+        enabled: false,
+      },
       registerType: 'autoUpdate',
       includeAssets: ['icon.svg', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'],
       manifest: {
@@ -52,13 +55,14 @@ export default defineConfig({
   },
   server: {
     host: '0.0.0.0',
-    port: 5000,
+    port: 5173,
+    strictPort: false,
     allowedHosts: true,
     proxy: {
-      '/api': {
-        target: 'http://localhost:3001',
+      '/stashd-scrape-api': {
+        target: `http://localhost:${process.env.SCRAPE_PROXY_PORT || '3100'}`,
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, ''),
+        rewrite: (path) => path.replace(/^\/stashd-scrape-api/, ''),
       },
     },
   },

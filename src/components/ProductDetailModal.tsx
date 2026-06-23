@@ -3,6 +3,7 @@ import { X, ExternalLink, Share2, Trash2, Check, ShoppingBag, RefreshCw, Info } 
 import { refreshProduct } from '../lib/refreshProduct';
 import { useAuth } from '../contexts/AuthContext';
 import type { Product, List } from '../lib/types';
+import { formatListLabel } from '../lib/listHierarchy';
 import {
   addProductToList,
   getProductListRows,
@@ -272,7 +273,7 @@ export default function ProductDetailModal({
                                 : 'bg-white text-gray-700 border-gray-300 hover:border-gray-400'
                             }`}
                           >
-                            <span className="text-sm font-medium">{list.name}</span>
+                            <span className="text-sm font-medium">{formatListLabel(list, lists)}</span>
                             {productLists.includes(list.id) && <Check className="w-4 h-4" />}
                           </button>
                         ))}
@@ -310,7 +311,7 @@ export default function ProductDetailModal({
                                     : 'bg-white text-gray-700 border-gray-300 hover:border-gray-400'
                               }`}
                             >
-                              <span className="text-sm font-medium">{list.name}</span>
+                              <span className="text-sm font-medium">{formatListLabel(list, lists)}</span>
                               {productLists.includes(list.id) && !blocked && (
                                 <Check className="w-4 h-4" />
                               )}

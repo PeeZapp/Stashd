@@ -13,7 +13,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const isProd = process.env.NODE_ENV === 'production';
-const PORT = isProd ? (process.env.PORT || 5000) : 3001;
+/** 3100 avoids clashes with other local apps that often use 3001 or /api (e.g. Next.js). */
+const PORT = isProd ? (process.env.PORT || 5000) : Number(process.env.SCRAPE_PROXY_PORT || 3100);
 
 const app = express();
 
@@ -1355,11 +1356,29 @@ app.get(['/scrape-link', '/api/scrape-link'], async (req, res) => {
 
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
-app.get(['/playwright-status', '/api/playwright-status'], (_req, res) => {
-  res.json({
+function playwrightStatusPayload() {
+  return {
     ready: !!(_browser && _browser.isConnected()),
     launching: !!_browserLaunchPromise,
-  });
+  };
+}
+
+function ensureBrowserLaunching() {
+  if (!_browser?.isConnected() && !_browserLaunchPromise) {
+    void getBrowser().catch((err) => {
+      console.warn('[playwright] warmup launch failed:', err.message);
+    });
+  }
+}
+
+app.get(['/playwright-status', '/api/playwright-status'], (_req, res) => {
+  ensureBrowserLaunching();
+  res.json(playwrightStatusPayload());
+});
+
+app.post(['/warmup', '/api/warmup'], (_req, res) => {
+  ensureBrowserLaunching();
+  res.json(playwrightStatusPayload());
 });
 
 app.get(['/proxy-status', '/api/proxy-status'], async (_req, res) => {

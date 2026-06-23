@@ -14,7 +14,8 @@ import {
   writeBatch,
   type DocumentData,
 } from 'firebase/firestore';
-import { db } from './firebase';
+import { db, auth } from './firebase';
+import { isFirestorePermissionDenied, withFirestoreAuth } from './firestoreAuth';
 import { normalizeShareToken } from './shareLink';
 import type {
   List,
@@ -90,11 +91,13 @@ function mapProduct(id: string, data: DocumentData): Product {
 function mapList(id: string, data: DocumentData): List {
   const rawScope = data.scope as string | undefined;
   const scope: ListScope = rawScope === 'stash' ? 'stash' : 'wishlist';
+  const parentListId = data.parent_list_id as string | null | undefined;
   return {
     id,
     user_id: data.user_id as string,
     name: (data.name as string) ?? '',
     scope,
+    parent_list_id: parentListId ?? null,
     is_shared: Boolean(data.is_shared),
     share_token: (data.share_token as string | null) ?? null,
     created_at: asIso(data.created_at),
@@ -245,8 +248,17 @@ function mapSavedLinkMetadata(data: unknown): SavedLinkMetadata {
 }
 
 /** Firestore rejects `undefined`; strip it from nested objects before writes. */
+function isFirestoreFieldValue(value: unknown): boolean {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    '_methodName' in (value as Record<string, unknown>)
+  );
+}
+
 function sanitizeForFirestore<T>(value: T): T {
   if (value === undefined) return value;
+  if (isFirestoreFieldValue(value)) return value;
   if (value === null || typeof value !== 'object') return value;
   if (Array.isArray(value)) {
     return value.map((item) =>
@@ -258,6 +270,22 @@ function sanitizeForFirestore<T>(value: T): T {
     if (entry !== undefined) out[key] = sanitizeForFirestore(entry);
   }
   return out as T;
+}
+
+function authAddDoc(...args: Parameters<typeof addDoc>) {
+  return withFirestoreAuth(() => addDoc(...args));
+}
+
+function authSetDoc(...args: Parameters<typeof setDoc>) {
+  return withFirestoreAuth(() => setDoc(...args));
+}
+
+function authDeleteDoc(...args: Parameters<typeof deleteDoc>) {
+  return withFirestoreAuth(() => deleteDoc(...args));
+}
+
+function authBatchCommit(batch: ReturnType<typeof writeBatch>) {
+  return withFirestoreAuth(() => batch.commit());
 }
 
 function mapSavedLinkCollection(id: string, data: DocumentData): SavedLinkCollection {
@@ -367,7 +395,7 @@ export async function upsertProfile(params: {
   name: string;
 }): Promise<void> {
   const ref = doc(db, 'profiles', params.id);
-  await setDoc(
+  await authSetDoc(
     ref,
     {
       id: params.id,
@@ -382,7 +410,7 @@ export async function upsertProfile(params: {
 
 export async function updateProfileName(userId: string, name: string): Promise<void> {
   const ref = doc(db, 'profiles', userId);
-  await setDoc(
+  await authSetDoc(
     ref,
     {
       name,
@@ -400,7 +428,7 @@ export async function updateProfileDetailedAddSettings(
   }
 ): Promise<void> {
   const ref = doc(db, 'profiles', userId);
-  await setDoc(
+  await authSetDoc(
     ref,
     {
       ...settings,
@@ -413,13 +441,29 @@ export async function updateProfileDetailedAddSettings(
 export async function createProduct(
   payload: Omit<Product, 'id' | 'created_at' | 'updated_at'>
 ): Promise<Product> {
-  const ref = await addDoc(collection(db, 'products'), {
-    ...payload,
-    created_at: serverTimestamp(),
-    updated_at: serverTimestamp(),
+  return withFirestoreAuth(async () => {
+    const uid = auth.currentUser!.uid;
+    const ref = await addDoc(collection(db, 'products'), {
+      user_id: uid,
+      title: payload.title,
+      current_price: payload.current_price ?? null,
+      original_price: payload.original_price ?? null,
+      is_on_sale: Boolean(payload.is_on_sale),
+      image_url: payload.image_url ?? null,
+      source_url: payload.source_url,
+      store_name: payload.store_name ?? null,
+      description: payload.description ?? null,
+      sku: payload.sku ?? null,
+      price_source: payload.price_source ?? null,
+      is_owned: Boolean(payload.is_owned),
+      add_detail_level: payload.add_detail_level,
+      detailed_enrichment_pending: Boolean(payload.detailed_enrichment_pending),
+      created_at: serverTimestamp(),
+      updated_at: serverTimestamp(),
+    });
+    const snap = await getDoc(ref);
+    return mapProduct(snap.id, snap.data() ?? payload);
   });
-  const snap = await getDoc(ref);
-  return mapProduct(snap.id, snap.data() ?? payload);
 }
 
 export async function updateProduct(
@@ -427,7 +471,7 @@ export async function updateProduct(
   updates: Partial<Omit<Product, 'id' | 'created_at' | 'updated_at' | 'user_id'>>
 ): Promise<Product | null> {
   const ref = doc(db, 'products', productId);
-  await setDoc(
+  await authSetDoc(
     ref,
     {
       ...updates,
@@ -451,7 +495,7 @@ export async function deleteProduct(productId: string, userId: string): Promise<
   const batch = writeBatch(db);
   listProductsSnap.docs.forEach((d) => batch.delete(d.ref));
   batch.delete(doc(db, 'products', productId));
-  await batch.commit();
+  await authBatchCommit(batch);
 }
 
 export async function getUserLists(userId: string): Promise<List[]> {
@@ -466,25 +510,49 @@ export async function createList(params: {
   name: string;
   share_token?: string | null;
   scope?: ListScope;
+  parent_list_id?: string | null;
 }): Promise<List> {
-  const ref = await addDoc(collection(db, 'lists'), {
-    user_id: params.user_id,
-    name: params.name,
-    share_token: params.share_token ?? null,
-    scope: params.scope ?? 'wishlist',
-    is_shared: false,
-    created_at: serverTimestamp(),
-    updated_at: serverTimestamp(),
+  return withFirestoreAuth(async () => {
+    const uid = auth.currentUser!.uid;
+    let scope: ListScope = params.scope ?? 'wishlist';
+    let parentListId: string | null = params.parent_list_id ?? null;
+
+    if (parentListId) {
+      const parentSnap = await getDoc(doc(db, 'lists', parentListId));
+      if (!parentSnap.exists()) {
+        throw new Error('That parent list no longer exists. Refresh and try again.');
+      }
+      const parent = mapList(parentSnap.id, parentSnap.data() as DocumentData);
+      if (parent.user_id !== uid) {
+        throw new Error('You can only add sub-lists to your own lists.');
+      }
+      if (parent.parent_list_id) {
+        throw new Error('Sub-lists cannot be nested further — create them under the main list.');
+      }
+      scope = parent.scope;
+      parentListId = parent.id;
+    }
+
+    const ref = await addDoc(collection(db, 'lists'), {
+      user_id: uid,
+      name: params.name,
+      share_token: params.share_token ?? null,
+      scope,
+      parent_list_id: parentListId,
+      is_shared: false,
+      created_at: serverTimestamp(),
+      updated_at: serverTimestamp(),
+    });
+    const snap = await getDoc(ref);
+    return mapList(snap.id, snap.data() ?? params);
   });
-  const snap = await getDoc(ref);
-  return mapList(snap.id, snap.data() ?? params);
 }
 
 export async function updateList(
   listId: string,
   updates: Partial<Pick<List, 'name' | 'is_shared' | 'share_token'>>
 ): Promise<void> {
-  await setDoc(
+  await authSetDoc(
     doc(db, 'lists', listId),
     {
       ...updates,
@@ -495,17 +563,50 @@ export async function updateList(
 }
 
 export async function deleteList(listId: string, userId: string): Promise<void> {
-  const listProductsSnap = await getDocs(
-    query(
-      collection(db, 'list_products'),
-      where('list_id', '==', listId),
-      where('user_id', '==', userId)
-    )
-  );
+  const allLists = await getUserLists(userId);
+  const toDelete = new Set<string>([listId]);
+  let expanded = true;
+  while (expanded) {
+    expanded = false;
+    for (const list of allLists) {
+      if (list.parent_list_id && toDelete.has(list.parent_list_id) && !toDelete.has(list.id)) {
+        toDelete.add(list.id);
+        expanded = true;
+      }
+    }
+  }
+
   const batch = writeBatch(db);
-  listProductsSnap.docs.forEach((d) => batch.delete(d.ref));
-  batch.delete(doc(db, 'lists', listId));
-  await batch.commit();
+  for (const id of toDelete) {
+    const rows = await getListProductRows(id, userId);
+    rows.forEach((row) => batch.delete(doc(db, 'list_products', row.id)));
+    batch.delete(doc(db, 'lists', id));
+  }
+  await authBatchCommit(batch);
+}
+
+const FIRESTORE_BATCH_LIMIT = 450;
+
+async function deleteDocsInBatches(refs: ReturnType<typeof doc>[]): Promise<void> {
+  for (let i = 0; i < refs.length; i += FIRESTORE_BATCH_LIMIT) {
+    const batch = writeBatch(db);
+    refs.slice(i, i + FIRESTORE_BATCH_LIMIT).forEach((ref) => batch.delete(ref));
+    await authBatchCommit(batch);
+  }
+}
+
+/** Deletes wishlist/stash lists and their list_products rows. Products are kept. */
+export async function deleteAllProductLists(userId: string): Promise<{ lists: number; links: number }> {
+  return withFirestoreAuth(async () => {
+    const [listsSnap, linksSnap] = await Promise.all([
+      getDocs(query(collection(db, 'lists'), where('user_id', '==', userId))),
+      getDocs(query(collection(db, 'list_products'), where('user_id', '==', userId))),
+    ]);
+    const linkRefs = linksSnap.docs.map((d) => d.ref);
+    const listRefs = listsSnap.docs.map((d) => d.ref);
+    await deleteDocsInBatches([...linkRefs, ...listRefs]);
+    return { lists: listRefs.length, links: linkRefs.length };
+  });
 }
 
 /**
@@ -517,9 +618,19 @@ export async function getListProductRows(
   listId: string,
   userId?: string | null
 ): Promise<ListProduct[]> {
-  const parts = [where('list_id', '==', listId)];
-  if (userId != null && userId !== '') parts.push(where('user_id', '==', userId));
-  const snap = await getDocs(query(collection(db, 'list_products'), ...parts));
+  // Query by user_id only, then filter by list_id in memory. Compound list_id+user_id
+  // queries can fail security rules even when single-field queries succeed.
+  if (userId != null && userId !== '') {
+    const snap = await getDocs(
+      query(collection(db, 'list_products'), where('user_id', '==', userId))
+    );
+    return snap.docs
+      .map((d) => mapListProduct(d.id, d.data()))
+      .filter((row) => row.list_id === listId);
+  }
+  const snap = await getDocs(
+    query(collection(db, 'list_products'), where('list_id', '==', listId))
+  );
   return snap.docs.map((d) => mapListProduct(d.id, d.data()));
 }
 
@@ -528,13 +639,11 @@ export async function getProductListRows(
   userId: string
 ): Promise<ListProduct[]> {
   const snap = await getDocs(
-    query(
-      collection(db, 'list_products'),
-      where('product_id', '==', productId),
-      where('user_id', '==', userId)
-    )
+    query(collection(db, 'list_products'), where('user_id', '==', userId))
   );
-  return snap.docs.map((d) => mapListProduct(d.id, d.data()));
+  return snap.docs
+    .map((d) => mapListProduct(d.id, d.data()))
+    .filter((row) => row.product_id === productId);
 }
 
 export async function addProductToList(params: {
@@ -542,23 +651,59 @@ export async function addProductToList(params: {
   list_id: string;
   product_id: string;
 }): Promise<void> {
-  const [listSnap, productSnap] = await Promise.all([
-    getDoc(doc(db, 'lists', params.list_id)),
-    getDoc(doc(db, 'products', params.product_id)),
-  ]);
-  if (!listSnap.exists() || !productSnap.exists()) return;
-  const list = mapList(listSnap.id, listSnap.data() as DocumentData);
-  const product = mapProduct(productSnap.id, productSnap.data() as DocumentData);
-  if (list.scope === 'stash' && !product.is_owned) {
-    throw new Error(
-      'Stash lists are for things you own. Mark this item as owned first, or open it from the Owned tab.'
-    );
-  }
-  const existing = await getListProductRows(params.list_id, params.user_id);
-  if (existing.some((row) => row.product_id === params.product_id)) return;
-  await addDoc(collection(db, 'list_products'), {
-    ...params,
-    added_at: serverTimestamp(),
+  return withFirestoreAuth(async () => {
+    const uid = auth.currentUser?.uid;
+    if (!uid) throw new Error('You must be signed in to save.');
+
+    const [listSnap, productSnap] = await Promise.all([
+      getDoc(doc(db, 'lists', params.list_id)),
+      getDoc(doc(db, 'products', params.product_id)),
+    ]);
+    if (!listSnap.exists()) {
+      throw new Error('That list no longer exists. Refresh the page and try again.');
+    }
+    if (!productSnap.exists()) {
+      throw new Error('That product could not be found. Try saving again.');
+    }
+    const list = mapList(listSnap.id, listSnap.data() as DocumentData);
+    const product = mapProduct(productSnap.id, productSnap.data() as DocumentData);
+    if (list.user_id !== uid) {
+      throw new Error('You can only add items to your own lists.');
+    }
+    if (product.user_id !== uid) {
+      throw new Error(
+        'This product belongs to a different account. Sign out and sign in again, then retry.'
+      );
+    }
+    if (list.scope === 'stash' && !product.is_owned) {
+      throw new Error(
+        'Stash lists are for things you own. Mark this item as owned first, or add it to a wishlist.'
+      );
+    }
+    try {
+      const existing = await getListProductRows(params.list_id, uid);
+      if (existing.some((row) => row.product_id === params.product_id)) return;
+    } catch (err) {
+      if (!isFirestorePermissionDenied(err)) throw err;
+      // Legacy list_products rows can block the read query; still try to link the product.
+    }
+    try {
+      await authAddDoc(collection(db, 'list_products'), {
+        user_id: uid,
+        list_id: params.list_id,
+        product_id: params.product_id,
+        added_at: serverTimestamp(),
+      });
+    } catch (err) {
+      if (isFirestorePermissionDenied(err)) {
+        throw new Error(
+          `Could not link product to "${list.name}". ` +
+            `This often happens with lists created before a schema update — ` +
+            `run \`await resetWishlists()\` in the browser console to wipe wishlists and start fresh.`
+        );
+      }
+      throw err;
+    }
   });
 }
 
@@ -567,12 +712,28 @@ export async function addProductToLists(params: {
   list_ids: string[];
   product_id: string;
 }): Promise<void> {
-  for (const listId of params.list_ids) {
-    await addProductToList({
-      user_id: params.user_id,
-      list_id: listId,
-      product_id: params.product_id,
-    });
+  const listIds = [...new Set(params.list_ids)].filter(Boolean);
+  for (const listId of listIds) {
+    try {
+      await addProductToList({
+        user_id: params.user_id,
+        list_id: listId,
+        product_id: params.product_id,
+      });
+    } catch (err) {
+      let listLabel = listId;
+      try {
+        const snap = await getDoc(doc(db, 'lists', listId));
+        if (snap.exists()) {
+          const list = mapList(snap.id, snap.data() as DocumentData);
+          listLabel = `"${list.name}" (${list.scope})`;
+        }
+      } catch {
+        // ignore — use raw id
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`Could not add to list ${listLabel}: ${message}`);
+    }
   }
 }
 
@@ -586,7 +747,7 @@ export async function removeProductFromList(params: {
   rows
     .filter((row) => row.product_id === params.product_id)
     .forEach((row) => batch.delete(doc(db, 'list_products', row.id)));
-  await batch.commit();
+  await authBatchCommit(batch);
 }
 
 export async function getProductsByIds(productIds: string[]): Promise<Product[]> {
@@ -594,6 +755,23 @@ export async function getProductsByIds(productIds: string[]): Promise<Product[]>
   const ids = Array.from(new Set(productIds));
   const snaps = await Promise.all(ids.map((id) => getDoc(doc(db, 'products', id))));
   return snaps.filter((s) => s.exists()).map((s) => mapProduct(s.id, s.data() as DocumentData));
+}
+
+export async function getUserProducts(userId: string): Promise<Product[]> {
+  const snap = await getDocs(query(collection(db, 'products'), where('user_id', '==', userId)));
+  return snap.docs
+    .map((d) => mapProduct(d.id, d.data()))
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+}
+
+/** Products saved to your account that are not linked to any wishlist/stash list. */
+export async function getUnlistedProducts(userId: string): Promise<Product[]> {
+  const [products, linksSnap] = await Promise.all([
+    getUserProducts(userId),
+    getDocs(query(collection(db, 'list_products'), where('user_id', '==', userId))),
+  ]);
+  const linkedIds = new Set(linksSnap.docs.map((d) => d.data().product_id as string));
+  return products.filter((p) => !linkedIds.has(p.id));
 }
 
 export async function getUserListsWithProducts(
@@ -677,7 +855,7 @@ export async function createStandardList(params: {
   share_token?: string | null;
   collaborator_emails?: string[];
 }): Promise<StandardList> {
-  const ref = await addDoc(collection(db, 'standard_lists'), {
+  const ref = await authAddDoc(collection(db, 'standard_lists'), {
     user_id: params.user_id,
     name: params.name,
     description: params.description ?? null,
@@ -727,7 +905,7 @@ export async function updateStandardList(
     >
   >
 ): Promise<void> {
-  await setDoc(
+  await authSetDoc(
     doc(db, 'standard_lists', listId),
     {
       ...updates,
@@ -752,7 +930,7 @@ export async function deleteStandardList(listId: string, userId: string): Promis
   itemsSnap.docs.forEach((d) => batch.delete(d.ref));
   commentsSnap.docs.forEach((d) => batch.delete(d.ref));
   batch.delete(doc(db, 'standard_lists', listId));
-  await batch.commit();
+  await authBatchCommit(batch);
 }
 
 export async function getStandardListItems(
@@ -794,7 +972,7 @@ export async function createStandardListItem(params: {
   product_id?: string | null;
   image_urls?: string[];
 }): Promise<StandardListItem> {
-  const ref = await addDoc(collection(db, 'standard_list_items'), {
+  const ref = await authAddDoc(collection(db, 'standard_list_items'), {
     user_id: params.user_id,
     list_id: params.list_id,
     parent_id: params.parent_id ?? null,
@@ -813,7 +991,7 @@ export async function createStandardListItem(params: {
     created_at: serverTimestamp(),
     updated_at: serverTimestamp(),
   });
-  await setDoc(
+  await authSetDoc(
     doc(db, 'standard_lists', params.list_id),
     { updated_at: serverTimestamp() },
     { merge: true }
@@ -844,7 +1022,7 @@ export async function updateStandardListItem(
   >
 ): Promise<void> {
   const payload: Record<string, unknown> = { ...updates, updated_at: serverTimestamp() };
-  await setDoc(doc(db, 'standard_list_items', itemId), payload, { merge: true });
+  await authSetDoc(doc(db, 'standard_list_items', itemId), payload, { merge: true });
 }
 
 export async function reorderStandardListItems(
@@ -859,7 +1037,7 @@ export async function reorderStandardListItems(
       { merge: true }
     );
   });
-  await batch.commit();
+  await authBatchCommit(batch);
 }
 
 export async function deleteStandardListItem(itemId: string, listId: string): Promise<void> {
@@ -884,7 +1062,7 @@ export async function deleteStandardListItem(itemId: string, listId: string): Pr
   commentsSnap.docs
     .filter((d) => toDelete.has(d.data().item_id as string))
     .forEach((d) => batch.delete(d.ref));
-  await batch.commit();
+  await authBatchCommit(batch);
 }
 
 export async function getStandardListComments(listId: string): Promise<StandardListComment[]> {
@@ -903,7 +1081,7 @@ export async function createStandardListComment(params: {
   author_name: string;
   body: string;
 }): Promise<StandardListComment> {
-  const ref = await addDoc(collection(db, 'standard_list_comments'), {
+  const ref = await authAddDoc(collection(db, 'standard_list_comments'), {
     ...params,
     created_at: serverTimestamp(),
   });
@@ -912,7 +1090,7 @@ export async function createStandardListComment(params: {
 }
 
 export async function deleteStandardListComment(commentId: string): Promise<void> {
-  await deleteDoc(doc(db, 'standard_list_comments', commentId));
+  await authDeleteDoc(doc(db, 'standard_list_comments', commentId));
 }
 
 export async function getProductById(productId: string): Promise<Product | null> {
@@ -942,7 +1120,7 @@ export async function createNotifications(
       created_at: serverTimestamp(),
     });
   });
-  await batch.commit();
+  await authBatchCommit(batch);
 }
 
 export async function markNotificationsRead(notificationIds: string[]): Promise<void> {
@@ -957,18 +1135,18 @@ export async function markNotificationsRead(notificationIds: string[]): Promise<
       { merge: true }
     );
   });
-  await batch.commit();
+  await authBatchCommit(batch);
 }
 
 export async function deleteNotification(notificationId: string): Promise<void> {
-  await deleteDoc(doc(db, 'notifications', notificationId));
+  await authDeleteDoc(doc(db, 'notifications', notificationId));
 }
 
 export async function deleteNotifications(notificationIds: string[]): Promise<void> {
   if (notificationIds.length === 0) return;
   const batch = writeBatch(db);
   notificationIds.forEach((id) => batch.delete(doc(db, 'notifications', id)));
-  await batch.commit();
+  await authBatchCommit(batch);
 }
 
 export function subscribeToNotifications(
@@ -995,7 +1173,7 @@ export async function getUserOutfits(userId: string): Promise<Outfit[]> {
 }
 
 export async function createOutfit(params: { user_id: string; name: string }): Promise<Outfit> {
-  const ref = await addDoc(collection(db, 'outfits'), {
+  const ref = await authAddDoc(collection(db, 'outfits'), {
     user_id: params.user_id,
     name: params.name,
     image_urls: [],
@@ -1010,7 +1188,7 @@ export async function updateOutfit(
   outfitId: string,
   updates: Partial<Pick<Outfit, 'name' | 'image_urls'>>
 ): Promise<void> {
-  await setDoc(
+  await authSetDoc(
     doc(db, 'outfits', outfitId),
     {
       ...updates,
@@ -1031,7 +1209,7 @@ export async function deleteOutfit(outfitId: string, userId: string): Promise<vo
   const batch = writeBatch(db);
   rowsSnap.docs.forEach((d) => batch.delete(d.ref));
   batch.delete(doc(db, 'outfits', outfitId));
-  await batch.commit();
+  await authBatchCommit(batch);
 }
 
 export async function getOutfitProductRows(outfitId: string, userId: string): Promise<OutfitProduct[]> {
@@ -1052,7 +1230,7 @@ export async function addProductToOutfit(params: {
 }): Promise<void> {
   const existing = await getOutfitProductRows(params.outfit_id, params.user_id);
   if (existing.some((row) => row.product_id === params.product_id)) return;
-  await addDoc(collection(db, 'outfit_products'), {
+  await authAddDoc(collection(db, 'outfit_products'), {
     ...params,
     added_at: serverTimestamp(),
   });
@@ -1068,7 +1246,7 @@ export async function removeProductFromOutfit(params: {
   rows
     .filter((row) => row.product_id === params.product_id)
     .forEach((row) => batch.delete(doc(db, 'outfit_products', row.id)));
-  await batch.commit();
+  await authBatchCommit(batch);
 }
 
 export async function getUserOutfitsWithProducts(userId: string): Promise<
@@ -1116,7 +1294,7 @@ export async function createSavedLinkCollection(params: {
   icon?: string | null;
   position?: number;
 }): Promise<SavedLinkCollection> {
-  const ref = await addDoc(collection(db, 'saved_link_collections'), {
+  const ref = await authAddDoc(collection(db, 'saved_link_collections'), {
     user_id: params.user_id,
     name: params.name.trim(),
     description: params.description ?? null,
@@ -1134,7 +1312,7 @@ export async function updateSavedLinkCollection(
   collectionId: string,
   updates: Partial<Pick<SavedLinkCollection, 'name' | 'description' | 'color' | 'icon' | 'position'>>
 ): Promise<void> {
-  await setDoc(
+  await authSetDoc(
     doc(db, 'saved_link_collections', collectionId),
     { ...updates, updated_at: serverTimestamp() },
     { merge: true }
@@ -1142,7 +1320,7 @@ export async function updateSavedLinkCollection(
 }
 
 export async function deleteSavedLinkCollection(collectionId: string): Promise<void> {
-  await deleteDoc(doc(db, 'saved_link_collections', collectionId));
+  await authDeleteDoc(doc(db, 'saved_link_collections', collectionId));
 }
 
 export async function getUserSavedLinks(userId: string): Promise<SavedLink[]> {
@@ -1187,7 +1365,7 @@ export async function createSavedLink(params: {
   metadata?: SavedLinkMetadata;
   enrichment_pending?: boolean;
 }): Promise<SavedLink> {
-  const ref = await addDoc(collection(db, 'saved_links'), {
+  const ref = await authAddDoc(collection(db, 'saved_links'), {
     user_id: params.user_id,
     collection_ids: params.collection_ids ?? [],
     url: params.url,
@@ -1234,7 +1412,7 @@ export async function updateSavedLink(
     >
   >
 ): Promise<void> {
-  await setDoc(
+  await authSetDoc(
     doc(db, 'saved_links', linkId),
     sanitizeForFirestore({ ...updates, updated_at: serverTimestamp() }),
     { merge: true }
@@ -1242,7 +1420,7 @@ export async function updateSavedLink(
 }
 
 export async function deleteSavedLink(linkId: string): Promise<void> {
-  await deleteDoc(doc(db, 'saved_links', linkId));
+  await authDeleteDoc(doc(db, 'saved_links', linkId));
 }
 
 export async function ensureDefaultSavedLinkCollections(userId: string): Promise<SavedLinkCollection[]> {
@@ -1309,5 +1487,5 @@ export async function deleteAllUserData(userId: string): Promise<void> {
   savedLinksSnap.docs.forEach((d) => batch.delete(d.ref));
   savedLinkCollectionsSnap.docs.forEach((d) => batch.delete(d.ref));
   batch.delete(doc(db, 'profiles', userId));
-  await batch.commit();
+  await authBatchCommit(batch);
 }
